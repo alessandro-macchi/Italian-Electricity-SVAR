@@ -161,7 +161,147 @@ for (v in variables) {
 }
 ```
 
-## 5. Short Reading Guide
+## 4. Preliminary Transformations
+
+This chunk prepares a first dataset for the SVAR analysis.
+
+I log-transform PUN, natural gas, and electricity consumption.
+I also add monthly dummies, using January as the reference month.
+
+```{r preliminary-transformations}
+svar_long <- plot_data
+
+log_variables <- c("PUN", "Natural gas", "Electricity consumption")
+
+if (any(svar_long$value[svar_long$variable %in% log_variables] <= 0, na.rm = TRUE)) {
+  stop("Log transformation requires strictly positive values.")
+}
+
+svar_long$value[svar_long$variable %in% log_variables] <- log(
+  svar_long$value[svar_long$variable %in% log_variables]
+)
+
+svar_long$variable[svar_long$variable == "PUN"] <- "log_pun"
+svar_long$variable[svar_long$variable == "Natural gas"] <- "log_natural_gas"
+svar_long$variable[svar_long$variable == "Electricity consumption"] <- "log_electricity_consumption"
+svar_long$variable[svar_long$variable == "RES capacity"] <- "res_capacity"
+svar_long$variable[svar_long$variable == "Heating degree days"] <- "heating_degree_days"
+svar_long$variable[svar_long$variable == "Cooling degree days"] <- "cooling_degree_days"
+
+svar_data <- reshape(
+  svar_long[, c("Date", "variable", "value")],
+  idvar = "Date",
+  timevar = "variable",
+  direction = "wide"
+)
+
+names(svar_data) <- sub("^value\\.", "", names(svar_data))
+svar_data <- svar_data[order(svar_data$Date), ]
+row.names(svar_data) <- NULL
+
+svar_data$month <- factor(
+  format(svar_data$Date, "%m"),
+  levels = sprintf("%02d", 1:12),
+  labels = month.abb
+)
+
+month_dummies <- model.matrix(~ month, data = svar_data)[, -1]
+colnames(month_dummies) <- paste0("month_", month.abb[-1])
+
+svar_data <- cbind(svar_data, month_dummies)
+svar_data$month <- NULL
+```
+
+## 5. ADF Stationarity Tests
+
+The Augmented Dickey-Fuller test has this null hypothesis:
+
+- the variable has a unit root, so it is not stationary.
+
+If the p-value is below 0.05, we reject the null and treat the variable as stationary.
+This is still a preliminary check, not the final modelling decision.
+I use 12 lags because the data are monthly.
+
+```{r adf-tests}
+if (!requireNamespace("tseries", quietly = TRUE)) {
+  stop("Package 'tseries' is needed for the ADF test. Install it with install.packages('tseries').")
+}
+
+adf_variables <- names(svar_data)[
+  names(svar_data) != "Date" &
+    !grepl("^month_", names(svar_data))
+]
+
+adf_lag <- 12
+
+adf_results <- do.call(
+  rbind,
+  lapply(adf_variables, function(v) {
+    test <- tseries::adf.test(
+      na.omit(svar_data[[v]]),
+      k = adf_lag
+    )
+
+    data.frame(
+      variable = v,
+      lags = adf_lag,
+      adf_statistic = as.numeric(test$statistic),
+      p_value = test$p.value,
+      conclusion = ifelse(
+        test$p.value < 0.05,
+        "Reject unit root: stationary",
+        "Do not reject unit root: non-stationary"
+      )
+    )
+  })
+)
+
+adf_results
+```
+
+## 6. First Differences For Non-Stationary Logged Variables
+
+The previous ADF test suggests that `log_pun` and `log_electricity_consumption`
+may still be non-stationary. As a next preliminary step, I take first differences
+of these two logged variables and run the ADF test again.
+
+```{r first-difference-adf-tests}
+diff_variables <- c("log_pun", "log_electricity_consumption")
+
+diff_data <- data.frame(
+  Date = svar_data$Date[-1]
+)
+
+for (v in diff_variables) {
+  diff_data[[paste0("d_", v)]] <- diff(svar_data[[v]])
+}
+
+diff_adf_results <- do.call(
+  rbind,
+  lapply(names(diff_data)[names(diff_data) != "Date"], function(v) {
+    test <- tseries::adf.test(
+      na.omit(diff_data[[v]]),
+      k = adf_lag
+    )
+
+    data.frame(
+      variable = v,
+      lags = adf_lag,
+      adf_statistic = as.numeric(test$statistic),
+      p_value = test$p.value,
+      conclusion = ifelse(
+        test$p.value < 0.05,
+        "Reject unit root: stationary",
+        "Do not reject unit root: non-stationary"
+      )
+    )
+  })
+)
+
+diff_adf_results
+```
+
+## 7. Short Reading Guide
 
 After looking at the plots, use this checklist:
 
