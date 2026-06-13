@@ -1,0 +1,173 @@
+---
+title: "First Visual Stationarity Checks"
+author: "Thesis SVAR project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+This notebook gives a first visual check of the variables that may enter the SVAR.
+
+The goal is not to decide the final model yet. In this first step, we only compare:
+
+- plots in levels;
+- ACF and PACF plots, which help us see persistence.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 5
+)
+```
+
+## 1. Load The Data
+
+```{r load-data}
+data_dir <- "data"
+
+parse_month <- function(x) {
+  as.Date(paste0("01-", x), format = "%d-%m-%Y")
+}
+
+parse_euro_number <- function(x) {
+  x <- gsub("\\.", "", x)
+  x <- gsub(",", ".", x)
+  as.numeric(x)
+}
+
+read_semicolon_series <- function(file, value_name, new_name) {
+  raw <- read.csv(
+    file.path(data_dir, file),
+    sep = ";",
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
+
+  data.frame(
+    Date = parse_month(raw$Date),
+    value = parse_euro_number(raw[[value_name]]),
+    variable = new_name
+  )
+}
+
+read_comma_series <- function(file, value_name, new_name) {
+  raw <- read.csv(
+    file.path(data_dir, file),
+    sep = ",",
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
+
+  data.frame(
+    Date = parse_month(raw$Date),
+    value = as.numeric(raw[[value_name]]),
+    variable = new_name
+  )
+}
+
+pun <- read_semicolon_series("pun.csv", "PUN (€/MWh)", "PUN")
+gas <- read_semicolon_series("natural_gas.csv", "Natural gas Europe (€/MWh)", "Natural gas")
+res <- read_comma_series("italy_res_capacity_monthly.csv", "RES Installed Capacity (MW)", "RES capacity")
+hdd <- read_comma_series("hdd.csv", "heating_degree_days", "Heating degree days")
+cdd <- read_comma_series("cdd.csv", "cooling_degree_days", "Cooling degree days")
+cons <- read_semicolon_series("energy_consumption.csv", "Volumi MWh", "Electricity consumption")
+
+all_data <- rbind(pun, gas, res, hdd, cdd, cons)
+
+summary(all_data)
+```
+
+## 2. Keep The Common Monthly Sample
+
+For a VAR or SVAR, all variables need to be observed over the same dates.
+The common sample is from January 2005 to December 2025.
+
+I also exclude 2026 here because the June 2026 electricity consumption observation looks incomplete.
+
+```{r common-sample}
+start_date <- as.Date("2005-01-01")
+end_date <- as.Date("2025-12-01")
+
+plot_data <- all_data[
+  all_data$Date >= start_date &
+    all_data$Date <= end_date,
+]
+
+plot_data$year <- as.numeric(format(plot_data$Date, "%Y"))
+plot_data$month <- as.numeric(format(plot_data$Date, "%m"))
+plot_data$month_name <- factor(
+  months(plot_data$Date),
+  levels = months(as.Date(paste0("2025-", sprintf("%02d", 1:12), "-01")))
+)
+
+table(plot_data$variable)
+```
+
+## 3. Variables In Levels
+
+This section looks at the original variables.
+
+For each variable, we plot:
+
+- the time series;
+- the ACF;
+- the PACF.
+
+If the time series has a clear trend, or if the ACF decays very slowly, the variable may not be stationary in levels.
+
+```{r level-time-series}
+variables <- unique(plot_data$variable)
+
+for (v in variables) {
+  x <- plot_data[plot_data$variable == v, ]
+
+  plot(
+    x$Date,
+    x$value,
+    type = "l",
+    main = paste(v, "- level"),
+    xlab = "Date",
+    ylab = v,
+    col = "steelblue",
+    lwd = 2
+  )
+  grid()
+}
+```
+
+```{r level-acf}
+for (v in variables) {
+  x <- plot_data[plot_data$variable == v, ]
+
+  acf(
+    x$value,
+    lag.max = 36,
+    main = paste(v, "- ACF in levels")
+  )
+}
+```
+
+```{r level-pacf}
+for (v in variables) {
+  x <- plot_data[plot_data$variable == v, ]
+
+  pacf(
+    x$value,
+    lag.max = 36,
+    main = paste(v, "- PACF in levels")
+  )
+}
+```
+
+## 5. Short Reading Guide
+
+After looking at the plots, use this checklist:
+
+- If the level plot has a clear trend, the variable is probably not stationary in levels.
+- If the ACF decays slowly, the level variable may have a unit root.
+- If the ACF has large spikes at lags 12, 24, or 36, the variable may have annual seasonality.
+- If the PACF has a large first spike and the ACF decays slowly, the variable is highly persistent.
+
+For the next step, we can add first differences or formal tests such as ADF and KPSS.
