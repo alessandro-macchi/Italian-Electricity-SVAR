@@ -344,14 +344,3 @@ diff_adf_results <- do.call(
 
 diff_adf_results
 ```
-
-## 7. Short Reading Guide
-
-After looking at the plots, use this checklist:
-
-- If the level plot has a clear trend, the variable is probably not stationary in levels.
-- If the ACF decays slowly, the level variable may have a unit root.
-- If the ACF has large spikes at lags 12, 24, or 36, the variable may have annual seasonality.
-- If the PACF has a large first spike and the ACF decays slowly, the variable is highly persistent.
-
-For the next step, we can add first differences or formal tests such as ADF and KPSS.
