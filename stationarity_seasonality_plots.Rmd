@@ -344,3 +344,371 @@ diff_adf_results <- do.call(
 
 diff_adf_results
 ```
+
+## 7. Structural VAR With Cholesky Identification
+
+This section estimates the thesis baseline SVAR.
+
+The Cholesky ordering is:
+
+1. `log_natural_gas`;
+2. `d_log_energy_consumption`;
+3. `d_log_pun`.
+
+The VAR is estimated on January 2010 to December 2018.
+The pseudo out-of-sample evaluation is January 2019 to December 2024.
+
+The weather variables, renewable capacity, and monthly dummies enter as
+exogenous variables. In the recursive forecast exercise, their realised values
+are used for the next month, so the exercise is conditional on these exogenous
+paths.
+
+```{r svar-data-input}
+if (!requireNamespace("vars", quietly = TRUE)) {
+  stop("Package 'vars' is needed for the VAR and SVAR models. Install it with install.packages('vars').")
+}
+
+svar_variables <- c(
+  "log_natural_gas",
+  "d_log_energy_consumption",
+  "d_log_pun"
+)
+
+monthly_dummy_variables <- grep("^month_", names(svar_data), value = TRUE)
+
+exogenous_variables <- c(
+  "heating_degree_days",
+  "cooling_degree_days",
+  "res_capacity",
+  monthly_dummy_variables
+)
+
+svar_model_data <- svar_data[order(svar_data$Date), ]
+
+# Data input placeholder for the final cleaned modelling dataset.
+# If the data cleaning step is later moved to a separate script, replace
+# this object with the imported final dataset with the same column names.
+svar_model_data$d_log_energy_consumption <- c(
+  NA,
+  diff(svar_model_data$log_electricity_consumption)
+)
+svar_model_data$d_log_pun <- c(
+  NA,
+  diff(svar_model_data$log_pun)
+)
+
+required_svar_columns <- c(
+  "Date",
+  "log_natural_gas",
+  "log_electricity_consumption",
+  "log_pun",
+  svar_variables,
+  exogenous_variables
+)
+
+missing_svar_columns <- setdiff(required_svar_columns, names(svar_model_data))
+
+if (length(missing_svar_columns) > 0) {
+  stop(
+    "The SVAR dataset is missing these columns: ",
+    paste(missing_svar_columns, collapse = ", ")
+  )
+}
+
+svar_input <- svar_model_data[
+  complete.cases(svar_model_data[, required_svar_columns]),
+  required_svar_columns
+]
+
+estimation_start <- as.Date("2005-01-01")
+estimation_end <- as.Date("2018-12-01")
+test_start <- as.Date("2019-01-01")
+test_end <- as.Date("2024-12-01")
+
+estimation_sample <- svar_input[
+  svar_input$Date >= estimation_start & svar_input$Date <= estimation_end,
+]
+
+test_sample <- svar_input[
+  svar_input$Date >= test_start & svar_input$Date <= test_end,
+]
+
+if (nrow(estimation_sample) == 0) {
+  stop("The estimation sample is empty.")
+}
+
+if (nrow(test_sample) == 0) {
+  stop("The test sample is empty.")
+}
+
+endog_estimation <- as.matrix(estimation_sample[, svar_variables])
+exog_estimation <- as.matrix(estimation_sample[, exogenous_variables])
+
+sample_sizes <- data.frame(
+  sample = c("estimation", "test"),
+  start = c(min(estimation_sample$Date), min(test_sample$Date)),
+  end = c(max(estimation_sample$Date), max(test_sample$Date)),
+  observations = c(nrow(estimation_sample), nrow(test_sample))
+)
+
+sample_sizes
+```
+
+## 8. Lag Selection And Reduced-Form VAR
+
+The lag order is selected by Schwarz criterion, using `VARselect()` with
+`lag.max = 12`.
+
+```{r lag-selection-and-var}
+lag_selection <- vars::VARselect(
+  y = endog_estimation,
+  lag.max = 12,
+  type = "const",
+  exogen = exog_estimation
+)
+
+lag_selection$criteria
+
+selected_lag <- 12 # as.integer(lag_selection$selection[["AIC(n)"]])
+selected_lag # 12 for annual seasonality
+
+var_fit <- vars::VAR(
+  y = endog_estimation,
+  p = selected_lag,
+  type = "const",
+  exogen = exog_estimation
+)
+
+# summary(var_fit)
+```
+
+## 9. Cholesky A-Matrix And SVAR Estimation
+
+For an A-model in `vars::SVAR()`, the `NA` entries are estimated and the
+numeric entries are restrictions.
+
+With three variables, exact identification requires
+`K * (K - 1) / 2 = 3` restrictions. These are the three zero restrictions above
+the diagonal. The three lower off-diagonal entries are the contemporaneous
+Cholesky transmission parameters.
+
+```{r svar-cholesky}
+k_endog <- length(svar_variables)
+
+amat <- matrix(NA, nrow = k_endog, ncol = k_endog)
+rownames(amat) <- svar_variables
+colnames(amat) <- svar_variables
+amat[upper.tri(amat)] <- 0
+
+needed_restrictions <- k_endog * (k_endog - 1) / 2
+zero_restrictions <- sum(amat[upper.tri(amat)] == 0)
+free_lower_off_diagonal <- sum(is.na(amat[lower.tri(amat)]))
+
+identification_check <- data.frame(
+  k_endog = k_endog,
+  needed_zero_restrictions = needed_restrictions,
+  imposed_zero_restrictions = zero_restrictions,
+  free_lower_off_diagonal_parameters = free_lower_off_diagonal,
+  exactly_identified = zero_restrictions == needed_restrictions
+)
+
+if (!identification_check$exactly_identified) {
+  stop("The Cholesky A-matrix is not exactly identified.")
+}
+
+amat
+identification_check
+
+svar_fit <- vars::SVAR(
+  x = var_fit,
+  estmethod = "scoring",
+  Amat = amat,
+  Bmat = NULL
+)
+
+summary(svar_fit)
+```
+
+## 10. Recursive One-Step PUN Forecast Evaluation
+
+For point forecasts, the SVAR and the reduced-form VAR imply the same conditional
+mean. The recursive exercise therefore re-estimates the reduced-form VAR each
+month and then converts the one-step PUN forecasts back to levels.
+
+The random walk benchmark is:
+
+- next PUN level equals the last observed PUN level.
+
+The Diebold-Mariano test compares the squared forecast errors of the SVAR and
+the random walk. The null hypothesis is equal predictive accuracy.
+
+```{r recursive-forecast-evaluation}
+forecast_indices <- which(
+  svar_input$Date >= test_start & svar_input$Date <= test_end
+)
+
+forecast_one_step <- function(forecast_index) {
+  forecast_date <- svar_input$Date[forecast_index]
+
+  recursive_train <- svar_input[
+    svar_input$Date >= estimation_start &
+      svar_input$Date < forecast_date,
+  ]
+
+  recursive_endog <- as.matrix(recursive_train[, svar_variables])
+  recursive_exog <- as.matrix(recursive_train[, exogenous_variables])
+
+  recursive_var <- vars::VAR(
+    y = recursive_endog,
+    p = selected_lag,
+    type = "const",
+    exogen = recursive_exog
+  )
+
+  next_exog <- as.matrix(
+    svar_input[forecast_index, exogenous_variables, drop = FALSE]
+  )
+  colnames(next_exog) <- exogenous_variables
+
+  new_regressors <- data.frame(matrix(nrow = 1, ncol = 0))
+
+  for (lag in seq_len(selected_lag)) {
+    lagged_values <- svar_input[
+      forecast_index - lag,
+      svar_variables,
+      drop = FALSE
+    ]
+    names(lagged_values) <- paste0(names(lagged_values), ".l", lag)
+    new_regressors <- cbind(new_regressors, lagged_values)
+  }
+
+  new_regressors$const <- 1
+  new_regressors <- cbind(new_regressors, as.data.frame(next_exog))
+
+  endog_forecast <- sapply(
+    svar_variables,
+    function(variable) {
+      coefficients <- coef(recursive_var$varresult[[variable]])
+      coefficients[is.na(coefficients)] <- 0
+
+      missing_regressors <- setdiff(names(coefficients), names(new_regressors))
+
+      if (length(missing_regressors) > 0) {
+        stop(
+          "Missing recursive forecast regressors: ",
+          paste(missing_regressors, collapse = ", ")
+        )
+      }
+
+      sum(
+        as.numeric(new_regressors[1, names(coefficients)]) *
+          coefficients
+      )
+    }
+  )
+
+  previous_index <- forecast_index - 1
+
+  data.frame(
+    Date = forecast_date,
+    forecast_pun = exp(
+      svar_input$log_pun[previous_index] +
+        endog_forecast[["d_log_pun"]]
+    ),
+    actual_pun = exp(svar_input$log_pun[forecast_index]),
+    rw_pun = exp(svar_input$log_pun[previous_index])
+  )
+}
+
+recursive_forecasts <- do.call(
+  rbind,
+  lapply(forecast_indices, forecast_one_step)
+)
+
+forecast_metrics <- function(actual, model_forecast, rw_forecast) {
+  model_error <- actual - model_forecast
+  rw_error <- actual - rw_forecast
+
+  rmse_model <- sqrt(mean(model_error^2, na.rm = TRUE))
+  rmse_rw <- sqrt(mean(rw_error^2, na.rm = TRUE))
+
+  data.frame(
+    rmse_svar = rmse_model,
+    rmse_rw = rmse_rw,
+    mae_svar = mean(abs(model_error), na.rm = TRUE),
+    mae_rw = mean(abs(rw_error), na.rm = TRUE),
+    theils_u = rmse_model / rmse_rw
+  )
+}
+
+clark_west_test <- function(actual, model_forecast, rw_forecast) {
+  model_error <- actual - model_forecast
+  rw_error <- actual - rw_forecast
+  adjustment <- (model_forecast - rw_forecast)^2
+  cw_series <- rw_error^2 - (model_error^2 - adjustment)
+  cw_series <- cw_series[is.finite(cw_series)]
+
+  if (length(cw_series) < 2 || sd(cw_series) == 0) {
+    return(
+      data.frame(
+        clark_west_statistic = NA_real_,
+        clark_west_p_value_one_sided = NA_real_
+      )
+    )
+  }
+
+  statistic <- mean(cw_series) / (sd(cw_series) / sqrt(length(cw_series)))
+
+  data.frame(
+    clark_west_statistic = statistic,
+    clark_west_p_value_one_sided = 1 - pnorm(statistic)
+  )
+}
+
+diebold_mariano_test <- function(actual, model_forecast, rw_forecast) {
+  model_error <- actual - model_forecast
+  rw_error <- actual - rw_forecast
+  loss_difference <- model_error^2 - rw_error^2
+  loss_difference <- loss_difference[is.finite(loss_difference)]
+
+  if (length(loss_difference) < 2 || sd(loss_difference) == 0) {
+    return(
+      data.frame(
+        dm_statistic = NA_real_,
+        dm_p_value_two_sided = NA_real_,
+        dm_p_value_svar_lower_loss = NA_real_
+      )
+    )
+  }
+
+  statistic <- mean(loss_difference) /
+    (sd(loss_difference) / sqrt(length(loss_difference)))
+
+  data.frame(
+    dm_statistic = statistic,
+    dm_p_value_two_sided = 2 * pnorm(-abs(statistic)),
+    dm_p_value_svar_lower_loss = pnorm(statistic)
+  )
+}
+
+pun_forecast_accuracy <- cbind(
+  variable = "pun",
+  forecast_metrics(
+    recursive_forecasts$actual_pun,
+    recursive_forecasts$forecast_pun,
+    recursive_forecasts$rw_pun
+  ),
+  clark_west_test(
+    recursive_forecasts$actual_pun,
+    recursive_forecasts$forecast_pun,
+    recursive_forecasts$rw_pun
+  ),
+  diebold_mariano_test(
+    recursive_forecasts$actual_pun,
+    recursive_forecasts$forecast_pun,
+    recursive_forecasts$rw_pun
+  )
+)
+
+pun_forecast_accuracy
+```
