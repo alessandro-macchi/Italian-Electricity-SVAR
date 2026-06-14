@@ -20,6 +20,23 @@ knitr::opts_chunk$set(
   fig.width = 10,
   fig.height = 5
 )
+
+plots_dir <- "plots"
+dir.create(plots_dir, showWarnings = FALSE)
+
+make_plot_name <- function(variable, plot_type) {
+  variable_name <- tolower(variable)
+  variable_name <- gsub("[^a-z0-9]+", "_", variable_name)
+  variable_name <- gsub("^_|_$", "", variable_name)
+
+  file.path(plots_dir, paste(variable_name, plot_type, sep = "_"))
+}
+
+save_plot <- function(file_name, plot_code) {
+  png(file_name, width = 10, height = 5, units = "in", res = 300)
+  on.exit(dev.off())
+  force(plot_code)
+}
 ```
 
 ## 1. Load The Data
@@ -123,17 +140,26 @@ variables <- unique(plot_data$variable)
 for (v in variables) {
   x <- plot_data[plot_data$variable == v, ]
 
-  plot(
-    x$Date,
-    x$value,
-    type = "l",
-    main = paste(v, "- level"),
-    xlab = "Date",
-    ylab = v,
-    col = "steelblue",
-    lwd = 2
+  plot_level <- function() {
+    plot(
+      x$Date,
+      x$value,
+      type = "l",
+      main = paste(v, "- level"),
+      xlab = "Date",
+      ylab = v,
+      col = "steelblue",
+      lwd = 2
+    )
+    grid()
+  }
+
+  plot_level()
+
+  save_plot(
+    make_plot_name(v, "level_time_series.png"),
+    plot_level()
   )
-  grid()
 }
 ```
 
@@ -141,10 +167,19 @@ for (v in variables) {
 for (v in variables) {
   x <- plot_data[plot_data$variable == v, ]
 
-  acf(
-    x$value,
-    lag.max = 36,
-    main = paste(v, "- ACF in levels")
+  plot_acf <- function() {
+    acf(
+      x$value,
+      lag.max = 36,
+      main = paste(v, "- ACF in levels")
+    )
+  }
+
+  plot_acf()
+
+  save_plot(
+    make_plot_name(v, "acf_levels.png"),
+    plot_acf()
   )
 }
 ```
@@ -153,10 +188,19 @@ for (v in variables) {
 for (v in variables) {
   x <- plot_data[plot_data$variable == v, ]
 
-  pacf(
-    x$value,
-    lag.max = 36,
-    main = paste(v, "- PACF in levels")
+  plot_pacf <- function() {
+    pacf(
+      x$value,
+      lag.max = 36,
+      main = paste(v, "- PACF in levels")
+    )
+  }
+
+  plot_pacf()
+
+  save_plot(
+    make_plot_name(v, "pacf_levels.png"),
+    plot_pacf()
   )
 }
 ```
