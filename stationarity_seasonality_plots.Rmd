@@ -344,3 +344,769 @@ diff_adf_results <- do.call(
 
 diff_adf_results
 ```
+
+## 7. Reduced-Form VAR
+
+This section estimates a first standard VAR.
+
+At this stage there are no structural restrictions yet. The model is only the
+reduced-form VAR that will later be used as the starting point for the SVAR.
+
+I use first differences for `log_pun` and `log_electricity_consumption`, because
+the previous section suggested that these logged variables may be non-stationary.
+The other variables are kept in the same form used above. This is still a
+preliminary specification.
+
+```{r reduced-form-var-data}
+var_endogenous <- c(
+  "d_log_pun",
+  "log_natural_gas",
+  "res_capacity",
+  "heating_degree_days",
+  "cooling_degree_days",
+  "d_log_electricity_consumption"
+)
+
+var_model_data <- data.frame(
+  Date = svar_data$Date[-1],
+  d_log_pun = diff(svar_data$log_pun),
+  log_natural_gas = svar_data$log_natural_gas[-1],
+  res_capacity = svar_data$res_capacity[-1],
+  heating_degree_days = svar_data$heating_degree_days[-1],
+  cooling_degree_days = svar_data$cooling_degree_days[-1],
+  d_log_electricity_consumption = diff(svar_data$log_electricity_consumption)
+)
+
+var_month_dummies <- svar_data[
+  -1,
+  grepl("^month_", names(svar_data)),
+  drop = FALSE
+]
+
+var_model_data <- cbind(var_model_data, var_month_dummies)
+var_model_data <- na.omit(var_model_data)
+
+summary(var_model_data[, var_endogenous])
+```
+
+```{r reduced-form-var-functions}
+make_var_matrices <- function(y, lags, exog = NULL, start_row = lags + 1) {
+  rows <- start_row:nrow(y)
+
+  y_dependent <- y[rows, , drop = FALSE]
+
+  x_regressors <- matrix(1, nrow = length(rows), ncol = 1)
+  colnames(x_regressors) <- "constant"
+
+  for (lag in seq_len(lags)) {
+    lagged_y <- y[rows - lag, , drop = FALSE]
+    colnames(lagged_y) <- paste0(colnames(y), "_lag", lag)
+    x_regressors <- cbind(x_regressors, lagged_y)
+  }
+
+  if (!is.null(exog)) {
+    x_regressors <- cbind(x_regressors, exog[rows, , drop = FALSE])
+  }
+
+  list(y = y_dependent, x = x_regressors)
+}
+
+fit_var_ols <- function(y, lags, exog = NULL, start_row = lags + 1) {
+  var_matrices <- make_var_matrices(
+    y = y,
+    lags = lags,
+    exog = exog,
+    start_row = start_row
+  )
+
+  beta <- qr.solve(var_matrices$x, var_matrices$y)
+  residuals <- var_matrices$y - var_matrices$x %*% beta
+
+  list(
+    lags = lags,
+    y = var_matrices$y,
+    x = var_matrices$x,
+    beta = beta,
+    residuals = residuals,
+    residual_covariance = crossprod(residuals) / nrow(residuals)
+  )
+}
+
+compute_information_criteria <- function(var_fit) {
+  n_obs <- nrow(var_fit$residuals)
+  n_equations <- ncol(var_fit$y)
+  n_parameters <- ncol(var_fit$x) * n_equations
+
+  log_det_sigma <- as.numeric(
+    determinant(var_fit$residual_covariance, logarithm = TRUE)$modulus
+  )
+
+  data.frame(
+    lags = var_fit$lags,
+    AIC = log_det_sigma + 2 * n_parameters / n_obs,
+    BIC = log_det_sigma + log(n_obs) * n_parameters / n_obs,
+    HQIC = log_det_sigma + 2 * log(log(n_obs)) * n_parameters / n_obs
+  )
+}
+```
+
+```{r reduced-form-var-lag-selection}
+var_y <- as.matrix(var_model_data[, var_endogenous])
+
+var_exog <- as.matrix(
+  var_model_data[
+    ,
+    grepl("^month_", names(var_model_data)),
+    drop = FALSE
+  ]
+)
+
+max_lags <- 12
+lag_selection_start <- max_lags + 1
+
+lag_selection <- do.call(
+  rbind,
+  lapply(seq_len(max_lags), function(p) {
+    var_fit_p <- fit_var_ols(
+      y = var_y,
+      lags = p,
+      exog = var_exog,
+      start_row = lag_selection_start
+    )
+
+    compute_information_criteria(var_fit_p)
+  })
+)
+
+lag_selection
+```
+
+```{r reduced-form-var-estimation}
+selected_lag <- lag_selection$lags[which.min(lag_selection$BIC)]
+
+var_fit <- fit_var_ols(
+  y = var_y,
+  lags = 12, # CHANGE HERE FOR BIC SELECTION
+  exog = var_exog
+)
+
+var_equation_fit <- data.frame(
+  equation = colnames(var_fit$y),
+  r_squared = 1 -
+    colSums(var_fit$residuals^2) /
+      colSums(scale(var_fit$y, scale = FALSE)^2),
+  row.names = NULL
+)
+
+selected_lag
+var_equation_fit
+var_fit$residual_covariance
+```
+
+```{r reduced-form-var-stability}
+var_stability <- function(var_fit) {
+  n_variables <- ncol(var_fit$y)
+  n_lags <- var_fit$lags
+
+  companion <- matrix(0, n_variables * n_lags, n_variables * n_lags)
+
+  for (lag in seq_len(n_lags)) {
+    lag_rows <- (2 + (lag - 1) * n_variables):(1 + lag * n_variables)
+    coefficient_matrix <- t(var_fit$beta[lag_rows, , drop = FALSE])
+
+    companion[
+      1:n_variables,
+      ((lag - 1) * n_variables + 1):(lag * n_variables)
+    ] <- coefficient_matrix
+  }
+
+  if (n_lags > 1) {
+    companion[
+      (n_variables + 1):(n_variables * n_lags),
+      1:(n_variables * (n_lags - 1))
+    ] <- diag(n_variables * (n_lags - 1))
+  }
+
+  roots <- eigen(companion)$values
+
+  data.frame(
+    largest_root_modulus = max(Mod(roots)),
+    stable = max(Mod(roots)) < 1
+  )
+}
+
+var_stability(var_fit)
+```
+
+## 8. Reduced-Form VAR Diagnostics
+
+This section gives a compact residual check for the reduced-form VAR.
+
+These diagnostics are not used to choose the structural identification. They are
+only a quick warning system for residual autocorrelation, conditional
+heteroskedasticity, and strong residual correlation across equations.
+
+```{r compact-var-residual-diagnostics}
+var_residuals <- as.data.frame(var_fit$residuals)
+colnames(var_residuals) <- colnames(var_fit$y)
+
+diagnostic_lag <- 12
+
+arch_lm_test <- function(x, lags) {
+  squared_residuals <- na.omit(x)^2
+  rows <- (lags + 1):length(squared_residuals)
+
+  y <- squared_residuals[rows]
+  x_lags <- sapply(seq_len(lags), function(lag) {
+    squared_residuals[rows - lag]
+  })
+
+  colnames(x_lags) <- paste0("squared_residual_lag", seq_len(lags))
+
+  model <- lm(y ~ x_lags)
+  statistic <- length(y) * summary(model)$r.squared
+  p_value <- pchisq(statistic, df = lags, lower.tail = FALSE)
+
+  data.frame(
+    statistic = statistic,
+    p_value = p_value
+  )
+}
+
+residual_correlation <- cor(var_residuals)
+max_abs_residual_correlation <- apply(
+  abs(residual_correlation - diag(ncol(residual_correlation))),
+  1,
+  max
+)
+
+compact_diagnostics <- do.call(
+  rbind,
+  lapply(colnames(var_residuals), function(v) {
+    ljung_box_test <- Box.test(
+      var_residuals[[v]],
+      lag = diagnostic_lag,
+      type = "Ljung-Box"
+    )
+
+    arch_test <- arch_lm_test(
+      var_residuals[[v]],
+      lags = diagnostic_lag
+    )
+
+    data.frame(
+      equation = v,
+      residual_sd = sd(var_residuals[[v]]),
+      ljung_box_p_value = ljung_box_test$p.value,
+      arch_p_value = arch_test$p_value,
+      max_abs_residual_correlation = max_abs_residual_correlation[v],
+      row.names = NULL
+    )
+  })
+)
+
+compact_diagnostics
+```
+
+Small p-values in the Ljung-Box or ARCH columns indicate residual patterns that
+the reduced-form VAR has not fully absorbed.
+
+## 9. Recursive Identification Setup
+
+This section prepares a possible Cholesky ordering for the future SVAR step.
+
+No structural shocks are estimated here yet. The goal is only to write down the
+recursive ordering clearly before implementing the SVAR.
+
+The proposed ordering is:
+
+1. `res_capacity`
+2. `log_natural_gas`
+3. `d_log_electricity_consumption`
+4. `d_log_pun`
+
+In words, this ordering means that variables earlier in the list may affect
+variables later in the list contemporaneously, but variables later in the list do
+not affect earlier variables within the same month.
+
+```{r recursive-identification-ordering}
+cholesky_order <- c(
+  "res_capacity",
+  "log_natural_gas",
+  "log_electricity_consumption",
+  "log_pun"
+)
+
+cholesky_order_check <- data.frame(
+  position = seq_along(cholesky_order),
+  variable = cholesky_order,
+  available_in_var_data = cholesky_order %in% colnames(var_model_data)
+)
+
+cholesky_order_check
+```
+
+```{r recursive-identification-dataset}
+if (!all(cholesky_order %in% colnames(var_model_data))) {
+  stop("At least one variable in the Cholesky ordering is missing from var_model_data.")
+}
+
+cholesky_data <- var_model_data[, c("Date", cholesky_order)]
+
+summary(cholesky_data[, cholesky_order])
+```
+
+The current reduced-form VAR in Step 7 also includes `heating_degree_days` and
+`cooling_degree_days`. In the structural model below, I keep the recursive
+ordering as a four-variable endogenous system and include the two weather
+variables as exogenous regressors. This means that weather can help explain the
+monthly dynamics of the endogenous variables, but no structural weather shock is
+identified.
+
+## 11. Structural VAR Estimation
+
+This section estimates the first recursive Structural VAR using the `bsvars`
+package.
+
+The endogenous variables are the four variables in the Cholesky order. The
+exogenous variables are:
+
+- `heating_degree_days`;
+- `cooling_degree_days`;
+- monthly dummies.
+
+The `bsvars` model uses the recursive lower-triangular identification for the
+structural matrix `B`. The number of MCMC draws below is deliberately modest, so
+that the notebook remains easy to run while we are still developing the thesis
+specification.
+
+```{r recursive-svar-bsvars-data}
+if (!requireNamespace("bsvars", quietly = TRUE)) {
+  stop("Package 'bsvars' is required for the SVAR estimation. Please install it first.")
+}
+
+svar_y <- as.matrix(cholesky_data[, cholesky_order])
+
+svar_exogenous_variables <- c(
+  "heating_degree_days",
+  "cooling_degree_days",
+  names(var_model_data)[grepl("^month_", names(var_model_data))]
+)
+
+svar_exog <- as.matrix(
+  var_model_data[
+    ,
+    svar_exogenous_variables,
+    drop = FALSE
+  ]
+)
+
+svar_lags <- var_fit$lags
+
+svar_reduced_form_fit <- fit_var_ols(
+  y = svar_y,
+  lags = svar_lags,
+  exog = svar_exog
+)
+
+svar_dimensions <- data.frame(
+  object = c("endogenous data", "exogenous data"),
+  rows = c(nrow(svar_y), nrow(svar_exog)),
+  columns = c(ncol(svar_y), ncol(svar_exog))
+)
+
+svar_exogenous_variables
+svar_lags
+svar_dimensions
+```
+
+```{r recursive-svar-bsvars-estimation}
+set.seed(123)
+
+svar_burn_in_draws <- 200
+svar_posterior_draws <- 500
+svar_thin <- 1
+
+svar_specification <- bsvars::specify_bsvar$new(
+  data = svar_y,
+  p = svar_lags,
+  exogenous = svar_exog
+)
+
+svar_burn_in <- bsvars::estimate(
+  svar_specification,
+  S = svar_burn_in_draws,
+  thin = svar_thin,
+  show_progress = FALSE
+)
+
+svar_posterior <- bsvars::estimate(
+  svar_burn_in,
+  S = svar_posterior_draws,
+  thin = svar_thin,
+  show_progress = FALSE
+)
+
+svar_B_normalisation <- diag(
+  sign(diag(svar_posterior$last_draw$starting_values$B))
+) %*% svar_posterior$last_draw$starting_values$B
+
+if ("normalise_posterior" %in% getNamespaceExports("bsvars")) {
+  bsvars::normalise_posterior(
+    svar_posterior,
+    svar_B_normalisation
+  )
+} else {
+  svar_posterior <- bsvars::normalise(
+    svar_posterior,
+    svar_B_normalisation
+  )
+}
+
+summary(svar_posterior)
+```
+
+```{r recursive-svar-impact-matrix}
+svar_B_matrix <- svar_posterior$last_draw$starting_values$B
+svar_impact_matrix <- solve(svar_B_matrix)
+
+rownames(svar_impact_matrix) <- cholesky_order
+colnames(svar_impact_matrix) <- paste0(cholesky_order, "_shock")
+
+svar_impact_matrix
+```
+
+The impact matrix is lower triangular because of the recursive Cholesky
+identification. This means that each variable can react within the same month to
+its own shock and to shocks ordered before it. Because this is a Bayesian model,
+the table reports the inverse of the last normalised draw of the structural
+matrix `B`.
+
+```{r recursive-svar-structural-shocks}
+svar_structural_shock_draws <- bsvars::compute_structural_shocks(
+  svar_posterior
+)
+
+svar_structural_shocks_median <- t(
+  apply(
+    svar_structural_shock_draws,
+    c(1, 2),
+    median
+  )
+)
+
+svar_shock_dates <- cholesky_data$Date[
+  (svar_lags + 1):nrow(cholesky_data)
+]
+
+svar_structural_shocks <- data.frame(
+  Date = svar_shock_dates,
+  svar_structural_shocks_median,
+  row.names = NULL
+)
+
+names(svar_structural_shocks)[-1] <- paste0(cholesky_order, "_shock")
+
+summary(svar_structural_shocks[, -1])
+```
+
+```{r recursive-svar-shock-covariance-check}
+svar_structural_shock_covariance <- crossprod(
+  as.matrix(svar_structural_shocks[, -1])
+) / nrow(svar_structural_shocks)
+
+svar_structural_shock_covariance
+```
+
+The covariance matrix of the structural shocks should be close to the identity
+matrix. This is a check that the Cholesky transformation has converted the
+correlated reduced-form residuals into orthogonal structural shocks.
+
+## 16. Forecast Evaluation Against A Random Walk
+
+This section compares the one-step-ahead forecast implied by the recursive SVAR
+specification with a random walk benchmark.
+
+For unconditional point forecasts, the recursive SVAR and its reduced-form VAR
+produce the same point forecasts. The Cholesky identification changes how we
+interpret shocks, but it does not change the baseline conditional mean forecast.
+For this reason the expanding-window forecast below re-estimates the
+reduced-form VAR equations with the same endogenous variables and exogenous
+regressors used in the SVAR.
+
+The target is PUN. Because the model uses `d_log_pun`, I evaluate one-step-ahead
+forecasts for:
+
+- `log_pun`, using RMSE and MAE;
+- PUN in levels, using RMSE, MAE, and MAPE.
+
+The random walk benchmark assumes that next period's `log_pun` remains equal to
+the latest observed `log_pun`.
+
+Because the model is estimated for `d_log_pun`, the back-transformation is:
+
+`forecast(log_pun[t + 1]) = log_pun[t] + forecast(d_log_pun[t + 1])`.
+
+The level forecast is then obtained as `exp(forecast(log_pun[t + 1]))`. This is
+the median level forecast implied by the log forecast. A mean level forecast
+would require an additional log-normal bias correction.
+
+The SVAR forecast uses the realised next-period values of the exogenous
+regressors, including `heating_degree_days` and `cooling_degree_days`. The
+exercise should therefore be read as a conditional forecast comparison. For a
+real-time forecasting exercise, those weather regressors would need to be
+forecasted or lagged.
+
+```{r forecast-evaluation-data}
+forecast_data <- cholesky_data
+forecast_data$log_pun <- svar_data$log_pun[
+  match(forecast_data$Date, svar_data$Date)
+]
+forecast_data$pun <- exp(forecast_data$log_pun)
+
+forecast_horizons <- 1
+initial_window <- max(156, svar_lags + ncol(svar_reduced_form_fit$x) + 24)
+
+forecast_design <- data.frame(
+  validation_type = "expanding window",
+  initial_window_months = initial_window,
+  first_forecast_origin = forecast_data$Date[initial_window],
+  last_available_date = forecast_data$Date[nrow(forecast_data)],
+  forecast_horizon = forecast_horizons
+)
+
+forecast_design
+```
+
+```{r forecast-helper-functions}
+forecast_var_path <- function(var_fit, y_history, exog_future, horizon) {
+  forecasts <- matrix(
+    NA,
+    nrow = horizon,
+    ncol = ncol(y_history)
+  )
+
+  colnames(forecasts) <- colnames(y_history)
+  y_extended <- y_history
+
+  for (step in seq_len(horizon)) {
+    x_new <- c(constant = 1)
+
+    for (lag in seq_len(var_fit$lags)) {
+      lagged_values <- y_extended[nrow(y_extended) - lag + 1, ]
+      names(lagged_values) <- paste0(names(lagged_values), "_lag", lag)
+      x_new <- c(x_new, lagged_values)
+    }
+
+    x_new <- c(x_new, exog_future[step, ])
+    x_new <- x_new[rownames(var_fit$beta)]
+
+    forecasts[step, ] <- x_new %*% var_fit$beta
+    y_extended <- rbind(y_extended, forecasts[step, ])
+  }
+
+  forecasts
+}
+
+compute_forecast_metrics <- function(actual, forecast) {
+  error <- actual - forecast
+
+  data.frame(
+    RMSE = sqrt(mean(error^2, na.rm = TRUE)),
+    MAE = mean(abs(error), na.rm = TRUE)
+  )
+}
+
+compute_level_forecast_metrics <- function(actual, forecast) {
+  error <- actual - forecast
+
+  data.frame(
+    RMSE = sqrt(mean(error^2, na.rm = TRUE)),
+    MAE = mean(abs(error), na.rm = TRUE),
+    MAPE = mean(abs(error / actual), na.rm = TRUE) * 100
+  )
+}
+```
+
+```{r expanding-window-forecast-evaluation}
+forecast_results <- list()
+
+for (horizon in forecast_horizons) {
+  forecast_origins <- initial_window:(nrow(forecast_data) - horizon)
+
+  horizon_results <- do.call(
+    rbind,
+    lapply(forecast_origins, function(origin) {
+      train_y <- as.matrix(forecast_data[1:origin, cholesky_order])
+      train_exog <- svar_exog[1:origin, , drop = FALSE]
+      future_exog <- svar_exog[
+        (origin + 1):(origin + horizon),
+        ,
+        drop = FALSE
+      ]
+
+      fit_at_origin <- fit_var_ols(
+        y = train_y,
+        lags = svar_lags,
+        exog = train_exog
+      )
+
+      forecast_path <- forecast_var_path(
+        var_fit = fit_at_origin,
+        y_history = train_y,
+        exog_future = future_exog,
+        horizon = horizon
+      )
+
+      current_log_pun <- forecast_data$log_pun[origin]
+      actual_log_pun <- forecast_data$log_pun[origin + horizon]
+
+      svar_log_pun_forecast <- current_log_pun +
+        sum(forecast_path[, "d_log_pun"])
+
+      random_walk_log_pun_forecast <- current_log_pun
+
+      actual_pun <- exp(actual_log_pun)
+      svar_pun_forecast <- exp(svar_log_pun_forecast)
+      random_walk_pun_forecast <- exp(random_walk_log_pun_forecast)
+
+      data.frame(
+        horizon = horizon,
+        forecast_origin = forecast_data$Date[origin],
+        target_date = forecast_data$Date[origin + horizon],
+        actual_log_pun = actual_log_pun,
+        svar_log_pun_forecast = svar_log_pun_forecast,
+        random_walk_log_pun_forecast = random_walk_log_pun_forecast,
+        actual_pun = actual_pun,
+        svar_pun_forecast = svar_pun_forecast,
+        random_walk_pun_forecast = random_walk_pun_forecast
+      )
+    })
+  )
+
+  forecast_results[[as.character(horizon)]] <- horizon_results
+}
+
+forecast_results <- do.call(rbind, forecast_results)
+row.names(forecast_results) <- NULL
+
+head(forecast_results)
+```
+
+```{r one-step-forecast-comparison-plot}
+plot(
+  forecast_results$target_date,
+  forecast_results$actual_pun,
+  type = "l",
+  col = "black",
+  lwd = 2,
+  xlab = "Target date",
+  ylab = "PUN",
+  main = "One-step-ahead PUN forecast comparison"
+)
+
+lines(
+  forecast_results$target_date,
+  forecast_results$svar_pun_forecast,
+  col = "steelblue",
+  lwd = 2
+)
+
+lines(
+  forecast_results$target_date,
+  forecast_results$random_walk_pun_forecast,
+  col = "firebrick",
+  lwd = 2,
+  lty = 2
+)
+
+legend(
+  "topleft",
+  legend = c("Actual PUN", "SVAR forecast", "Random walk forecast"),
+  col = c("black", "steelblue", "firebrick"),
+  lwd = c(2, 2, 2),
+  lty = c(1, 1, 2),
+  bty = "n"
+)
+
+grid()
+```
+
+```{r forecast-metric-tables}
+log_forecast_metrics <- do.call(
+  rbind,
+  lapply(forecast_horizons, function(horizon) {
+    horizon_results <- forecast_results[
+      forecast_results$horizon == horizon,
+    ]
+
+    svar_metrics <- compute_forecast_metrics(
+      actual = horizon_results$actual_log_pun,
+      forecast = horizon_results$svar_log_pun_forecast
+    )
+
+    random_walk_metrics <- compute_forecast_metrics(
+      actual = horizon_results$actual_log_pun,
+      forecast = horizon_results$random_walk_log_pun_forecast
+    )
+
+    rbind(
+      data.frame(horizon = horizon, model = "Recursive SVAR", svar_metrics),
+      data.frame(horizon = horizon, model = "Random walk", random_walk_metrics)
+    )
+  })
+)
+
+level_forecast_metrics <- do.call(
+  rbind,
+  lapply(forecast_horizons, function(horizon) {
+    horizon_results <- forecast_results[
+      forecast_results$horizon == horizon,
+    ]
+
+    svar_metrics <- compute_level_forecast_metrics(
+      actual = horizon_results$actual_pun,
+      forecast = horizon_results$svar_pun_forecast
+    )
+
+    random_walk_metrics <- compute_level_forecast_metrics(
+      actual = horizon_results$actual_pun,
+      forecast = horizon_results$random_walk_pun_forecast
+    )
+
+    rbind(
+      data.frame(horizon = horizon, model = "Recursive SVAR", svar_metrics),
+      data.frame(horizon = horizon, model = "Random walk", random_walk_metrics)
+    )
+  })
+)
+
+log_forecast_metrics
+level_forecast_metrics
+```
+
+```{r forecast-relative-performance}
+relative_rmse <- merge(
+  log_forecast_metrics[
+    log_forecast_metrics$model == "Recursive SVAR",
+    c("horizon", "RMSE", "MAE")
+  ],
+  log_forecast_metrics[
+    log_forecast_metrics$model == "Random walk",
+    c("horizon", "RMSE", "MAE")
+  ],
+  by = "horizon",
+  suffixes = c("_svar", "_random_walk")
+)
+
+relative_rmse$svar_rmse_relative_to_random_walk <-
+  relative_rmse$RMSE_svar / relative_rmse$RMSE_random_walk
+
+relative_rmse$svar_mae_relative_to_random_walk <-
+  relative_rmse$MAE_svar / relative_rmse$MAE_random_walk
+
+relative_rmse
+```
+
+Values below 1 mean that the recursive SVAR forecast performs better than the
+random walk benchmark for that metric and horizon.

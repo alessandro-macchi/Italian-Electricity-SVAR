@@ -683,6 +683,1207 @@ diff_adf_results</code></pre>
 ## 1 Reject unit root: stationary
 ## 2 Reject unit root: stationary</code></pre>
 </div>
+<div id="reduced-form-var" class="section level2">
+<h2>7. Reduced-Form VAR</h2>
+<p>This section estimates a first standard VAR.</p>
+<p>At this stage there are no structural restrictions yet. The model is
+only the reduced-form VAR that will later be used as the starting point
+for the SVAR.</p>
+<p>I use first differences for <code>log_pun</code> and
+<code>log_electricity_consumption</code>, because the previous section
+suggested that these logged variables may be non-stationary. The other
+variables are kept in the same form used above. This is still a
+preliminary specification.</p>
+<pre class="r"><code>var_endogenous &lt;- c(
+  &quot;d_log_pun&quot;,
+  &quot;log_natural_gas&quot;,
+  &quot;res_capacity&quot;,
+  &quot;heating_degree_days&quot;,
+  &quot;cooling_degree_days&quot;,
+  &quot;d_log_electricity_consumption&quot;
+)
+
+var_model_data &lt;- data.frame(
+  Date = svar_data$Date[-1],
+  d_log_pun = diff(svar_data$log_pun),
+  log_natural_gas = svar_data$log_natural_gas[-1],
+  res_capacity = svar_data$res_capacity[-1],
+  heating_degree_days = svar_data$heating_degree_days[-1],
+  cooling_degree_days = svar_data$cooling_degree_days[-1],
+  d_log_electricity_consumption = diff(svar_data$log_electricity_consumption)
+)
+
+var_month_dummies &lt;- svar_data[
+  -1,
+  grepl(&quot;^month_&quot;, names(svar_data)),
+  drop = FALSE
+]
+
+var_model_data &lt;- cbind(var_model_data, var_month_dummies)
+var_model_data &lt;- na.omit(var_model_data)
+
+summary(var_model_data[, var_endogenous])</code></pre>
+<pre><code>##    d_log_pun         log_natural_gas  res_capacity   heating_degree_days
+##  Min.   :-0.709387   Min.   :1.589   Min.   :19501   Min.   :  4.84     
+##  1st Qu.:-0.068415   1st Qu.:3.030   1st Qu.:24814   1st Qu.: 23.80     
+##  Median : 0.001813   Median :3.318   Median :49883   Median : 95.85     
+##  Mean   : 0.002541   Mean   :3.323   Mean   :44915   Mean   :127.92     
+##  3rd Qu.: 0.083696   3rd Qu.:3.576   3rd Qu.:54972   3rd Qu.:223.76     
+##  Max.   : 0.487240   Max.   :5.381   Max.   :78277   Max.   :384.27     
+##  cooling_degree_days d_log_electricity_consumption
+##  Min.   :  0.00000   Min.   :-0.2260656           
+##  1st Qu.:  0.00337   1st Qu.:-0.0461927           
+##  Median :  1.81198   Median : 0.0118581           
+##  Mean   : 21.13096   Mean   :-0.0003464           
+##  3rd Qu.: 33.55111   3rd Qu.: 0.0480413           
+##  Max.   :127.75489   Max.   : 0.2017876</code></pre>
+<pre class="r"><code>make_var_matrices &lt;- function(y, lags, exog = NULL, start_row = lags + 1) {
+  rows &lt;- start_row:nrow(y)
+
+  y_dependent &lt;- y[rows, , drop = FALSE]
+
+  x_regressors &lt;- matrix(1, nrow = length(rows), ncol = 1)
+  colnames(x_regressors) &lt;- &quot;constant&quot;
+
+  for (lag in seq_len(lags)) {
+    lagged_y &lt;- y[rows - lag, , drop = FALSE]
+    colnames(lagged_y) &lt;- paste0(colnames(y), &quot;_lag&quot;, lag)
+    x_regressors &lt;- cbind(x_regressors, lagged_y)
+  }
+
+  if (!is.null(exog)) {
+    x_regressors &lt;- cbind(x_regressors, exog[rows, , drop = FALSE])
+  }
+
+  list(y = y_dependent, x = x_regressors)
+}
+
+fit_var_ols &lt;- function(y, lags, exog = NULL, start_row = lags + 1) {
+  var_matrices &lt;- make_var_matrices(
+    y = y,
+    lags = lags,
+    exog = exog,
+    start_row = start_row
+  )
+
+  beta &lt;- qr.solve(var_matrices$x, var_matrices$y)
+  residuals &lt;- var_matrices$y - var_matrices$x %*% beta
+
+  list(
+    lags = lags,
+    y = var_matrices$y,
+    x = var_matrices$x,
+    beta = beta,
+    residuals = residuals,
+    residual_covariance = crossprod(residuals) / nrow(residuals)
+  )
+}
+
+compute_information_criteria &lt;- function(var_fit) {
+  n_obs &lt;- nrow(var_fit$residuals)
+  n_equations &lt;- ncol(var_fit$y)
+  n_parameters &lt;- ncol(var_fit$x) * n_equations
+
+  log_det_sigma &lt;- as.numeric(
+    determinant(var_fit$residual_covariance, logarithm = TRUE)$modulus
+  )
+
+  data.frame(
+    lags = var_fit$lags,
+    AIC = log_det_sigma + 2 * n_parameters / n_obs,
+    BIC = log_det_sigma + log(n_obs) * n_parameters / n_obs,
+    HQIC = log_det_sigma + 2 * log(log(n_obs)) * n_parameters / n_obs
+  )
+}</code></pre>
+<pre class="r"><code>var_y &lt;- as.matrix(var_model_data[, var_endogenous])
+
+var_exog &lt;- as.matrix(
+  var_model_data[
+    ,
+    grepl(&quot;^month_&quot;, names(var_model_data)),
+    drop = FALSE
+  ]
+)
+
+max_lags &lt;- 12
+lag_selection_start &lt;- max_lags + 1
+
+lag_selection &lt;- do.call(
+  rbind,
+  lapply(seq_len(max_lags), function(p) {
+    var_fit_p &lt;- fit_var_ols(
+      y = var_y,
+      lags = p,
+      exog = var_exog,
+      start_row = lag_selection_start
+    )
+
+    compute_information_criteria(var_fit_p)
+  })
+)
+
+lag_selection</code></pre>
+<pre><code>##    lags      AIC       BIC     HQIC
+## 1     1 5.633800  7.204754 6.266851
+## 2     2 3.325267  5.419873 4.169335
+## 3     3 3.326600  5.944857 4.381685
+## 4     4 3.346170  6.488079 4.612273
+## 5     5 3.460824  7.126384 4.937944
+## 6     6 3.558330  7.747542 5.246467
+## 7     7 3.630323  8.343186 5.529477
+## 8     8 3.764415  9.000929 5.874586
+## 9     9 3.745149  9.505315 6.066337
+## 10   10 3.756424 10.040241 6.288629
+## 11   11 3.898613 10.706081 6.641835
+## 12   12 4.033881 11.365000 6.988120</code></pre>
+<pre class="r"><code>selected_lag &lt;- lag_selection$lags[which.min(lag_selection$BIC)]
+
+var_fit &lt;- fit_var_ols(
+  y = var_y,
+  lags = 12, # CHANGE HERE FOR BIC SELECTION
+  exog = var_exog
+)
+
+var_equation_fit &lt;- data.frame(
+  equation = colnames(var_fit$y),
+  r_squared = 1 -
+    colSums(var_fit$residuals^2) /
+      colSums(scale(var_fit$y, scale = FALSE)^2),
+  row.names = NULL
+)
+
+selected_lag</code></pre>
+<pre><code>## [1] 2</code></pre>
+<pre class="r"><code>var_equation_fit</code></pre>
+<pre><code>##                        equation r_squared
+## 1                     d_log_pun 0.4721635
+## 2               log_natural_gas 0.9741529
+## 3                  res_capacity 0.9999826
+## 4           heating_degree_days 0.9705394
+## 5           cooling_degree_days 0.9488549
+## 6 d_log_electricity_consumption 0.9257015</code></pre>
+<pre class="r"><code>var_fit$residual_covariance</code></pre>
+<pre><code>##                                  d_log_pun log_natural_gas res_capacity
+## d_log_pun                     0.0100785258    0.0064886558    0.3987054
+## log_natural_gas               0.0064886558    0.0080838590    0.5297314
+## res_capacity                  0.3987054436    0.5297314437 4404.6616276
+## heating_degree_days           0.4848196962    0.2276609678   75.9280748
+## cooling_degree_days           0.2204869856    0.0627827014   22.5137976
+## d_log_electricity_consumption 0.0008299306    0.0004084957    0.1492937
+##                               heating_degree_days cooling_degree_days
+## d_log_pun                              0.48481970          0.22048699
+## log_natural_gas                        0.22766097          0.06278270
+## res_capacity                          75.92807481         22.51379762
+## heating_degree_days                  338.93362001        -14.66748651
+## cooling_degree_days                  -14.66748651         56.53404740
+## d_log_electricity_consumption          0.03637494          0.08515501
+##                               d_log_electricity_consumption
+## d_log_pun                                      0.0008299306
+## log_natural_gas                                0.0004084957
+## res_capacity                                   0.1492936684
+## heating_degree_days                            0.0363749435
+## cooling_degree_days                            0.0851550080
+## d_log_electricity_consumption                  0.0004844812</code></pre>
+<pre class="r"><code>var_stability &lt;- function(var_fit) {
+  n_variables &lt;- ncol(var_fit$y)
+  n_lags &lt;- var_fit$lags
+
+  companion &lt;- matrix(0, n_variables * n_lags, n_variables * n_lags)
+
+  for (lag in seq_len(n_lags)) {
+    lag_rows &lt;- (2 + (lag - 1) * n_variables):(1 + lag * n_variables)
+    coefficient_matrix &lt;- t(var_fit$beta[lag_rows, , drop = FALSE])
+
+    companion[
+      1:n_variables,
+      ((lag - 1) * n_variables + 1):(lag * n_variables)
+    ] &lt;- coefficient_matrix
+  }
+
+  if (n_lags &gt; 1) {
+    companion[
+      (n_variables + 1):(n_variables * n_lags),
+      1:(n_variables * (n_lags - 1))
+    ] &lt;- diag(n_variables * (n_lags - 1))
+  }
+
+  roots &lt;- eigen(companion)$values
+
+  data.frame(
+    largest_root_modulus = max(Mod(roots)),
+    stable = max(Mod(roots)) &lt; 1
+  )
+}
+
+var_stability(var_fit)</code></pre>
+<pre><code>##   largest_root_modulus stable
+## 1              0.99857   TRUE</code></pre>
+</div>
+<div id="reduced-form-var-diagnostics" class="section level2">
+<h2>8. Reduced-Form VAR Diagnostics</h2>
+<p>This section gives a compact residual check for the reduced-form
+VAR.</p>
+<p>These diagnostics are not used to choose the structural
+identification. They are only a quick warning system for residual
+autocorrelation, conditional heteroskedasticity, and strong residual
+correlation across equations.</p>
+<pre class="r"><code>var_residuals &lt;- as.data.frame(var_fit$residuals)
+colnames(var_residuals) &lt;- colnames(var_fit$y)
+
+diagnostic_lag &lt;- 12
+
+arch_lm_test &lt;- function(x, lags) {
+  squared_residuals &lt;- na.omit(x)^2
+  rows &lt;- (lags + 1):length(squared_residuals)
+
+  y &lt;- squared_residuals[rows]
+  x_lags &lt;- sapply(seq_len(lags), function(lag) {
+    squared_residuals[rows - lag]
+  })
+
+  colnames(x_lags) &lt;- paste0(&quot;squared_residual_lag&quot;, seq_len(lags))
+
+  model &lt;- lm(y ~ x_lags)
+  statistic &lt;- length(y) * summary(model)$r.squared
+  p_value &lt;- pchisq(statistic, df = lags, lower.tail = FALSE)
+
+  data.frame(
+    statistic = statistic,
+    p_value = p_value
+  )
+}
+
+residual_correlation &lt;- cor(var_residuals)
+max_abs_residual_correlation &lt;- apply(
+  abs(residual_correlation - diag(ncol(residual_correlation))),
+  1,
+  max
+)
+
+compact_diagnostics &lt;- do.call(
+  rbind,
+  lapply(colnames(var_residuals), function(v) {
+    ljung_box_test &lt;- Box.test(
+      var_residuals[[v]],
+      lag = diagnostic_lag,
+      type = &quot;Ljung-Box&quot;
+    )
+
+    arch_test &lt;- arch_lm_test(
+      var_residuals[[v]],
+      lags = diagnostic_lag
+    )
+
+    data.frame(
+      equation = v,
+      residual_sd = sd(var_residuals[[v]]),
+      ljung_box_p_value = ljung_box_test$p.value,
+      arch_p_value = arch_test$p_value,
+      max_abs_residual_correlation = max_abs_residual_correlation[v],
+      row.names = NULL
+    )
+  })
+)
+
+compact_diagnostics</code></pre>
+<pre><code>##                        equation residual_sd ljung_box_p_value arch_p_value
+## 1                     d_log_pun  0.10060255         0.9996312 2.663408e-06
+## 2               log_natural_gas  0.09009897         0.9803557 1.877242e-07
+## 3                  res_capacity 66.50690648         0.9999762 9.685292e-03
+## 4           heating_degree_days 18.44878616         0.9996007 4.608681e-02
+## 5           cooling_degree_days  7.53469212         0.9545778 6.014070e-03
+## 6 d_log_electricity_consumption  0.02205713         0.8536719 1.566850e-03
+##   max_abs_residual_correlation
+## 1                    0.7188642
+## 2                    0.7188642
+## 3                    0.1021990
+## 4                    0.2623158
+## 5                    0.5145371
+## 6                    0.5145371</code></pre>
+<p>Small p-values in the Ljung-Box or ARCH columns indicate residual
+patterns that the reduced-form VAR has not fully absorbed.</p>
+</div>
+<div id="recursive-identification-setup" class="section level2">
+<h2>9. Recursive Identification Setup</h2>
+<p>This section prepares a possible Cholesky ordering for the future
+SVAR step.</p>
+<p>No structural shocks are estimated here yet. The goal is only to
+write down the recursive ordering clearly before implementing the
+SVAR.</p>
+<p>The proposed ordering is:</p>
+<ol style="list-style-type: decimal">
+<li><code>res_capacity</code></li>
+<li><code>log_natural_gas</code></li>
+<li><code>d_log_electricity_consumption</code></li>
+<li><code>d_log_pun</code></li>
+</ol>
+<p>In words, this ordering means that variables earlier in the list may
+affect variables later in the list contemporaneously, but variables
+later in the list do not affect earlier variables within the same
+month.</p>
+<pre class="r"><code>cholesky_order &lt;- c(
+  &quot;res_capacity&quot;,
+  &quot;log_natural_gas&quot;,
+  &quot;d_log_electricity_consumption&quot;,
+  &quot;d_log_pun&quot;
+)
+
+cholesky_order_check &lt;- data.frame(
+  position = seq_along(cholesky_order),
+  variable = cholesky_order,
+  available_in_var_data = cholesky_order %in% colnames(var_model_data)
+)
+
+cholesky_order_check</code></pre>
+<pre><code>##   position                      variable available_in_var_data
+## 1        1                  res_capacity                  TRUE
+## 2        2               log_natural_gas                  TRUE
+## 3        3 d_log_electricity_consumption                  TRUE
+## 4        4                     d_log_pun                  TRUE</code></pre>
+<pre class="r"><code>if (!all(cholesky_order %in% colnames(var_model_data))) {
+  stop(&quot;At least one variable in the Cholesky ordering is missing from var_model_data.&quot;)
+}
+
+cholesky_data &lt;- var_model_data[, c(&quot;Date&quot;, cholesky_order)]
+
+summary(cholesky_data[, cholesky_order])</code></pre>
+<pre><code>##   res_capacity   log_natural_gas d_log_electricity_consumption
+##  Min.   :19501   Min.   :1.589   Min.   :-0.2260656           
+##  1st Qu.:24814   1st Qu.:3.030   1st Qu.:-0.0461927           
+##  Median :49883   Median :3.318   Median : 0.0118581           
+##  Mean   :44915   Mean   :3.323   Mean   :-0.0003464           
+##  3rd Qu.:54972   3rd Qu.:3.576   3rd Qu.: 0.0480413           
+##  Max.   :78277   Max.   :5.381   Max.   : 0.2017876           
+##    d_log_pun        
+##  Min.   :-0.709387  
+##  1st Qu.:-0.068415  
+##  Median : 0.001813  
+##  Mean   : 0.002541  
+##  3rd Qu.: 0.083696  
+##  Max.   : 0.487240</code></pre>
+<p>The current reduced-form VAR in Step 7 also includes
+<code>heating_degree_days</code> and <code>cooling_degree_days</code>.
+In the structural model below, I keep the recursive ordering as a
+four-variable endogenous system and include the two weather variables as
+exogenous regressors. This means that weather can help explain the
+monthly dynamics of the endogenous variables, but no structural weather
+shock is identified.</p>
+</div>
+<div id="structural-var-estimation" class="section level2">
+<h2>11. Structural VAR Estimation</h2>
+<p>This section estimates the first recursive Structural VAR using the
+<code>bsvars</code> package.</p>
+<p>The endogenous variables are the four variables in the Cholesky
+order. The exogenous variables are:</p>
+<ul>
+<li><code>heating_degree_days</code>;</li>
+<li><code>cooling_degree_days</code>;</li>
+<li>monthly dummies.</li>
+</ul>
+<p>The <code>bsvars</code> model uses the recursive lower-triangular
+identification for the structural matrix <code>B</code>. The number of
+MCMC draws below is deliberately modest, so that the notebook remains
+easy to run while we are still developing the thesis specification.</p>
+<pre class="r"><code>if (!requireNamespace(&quot;bsvars&quot;, quietly = TRUE)) {
+  stop(&quot;Package &#39;bsvars&#39; is required for the SVAR estimation. Please install it first.&quot;)
+}
+
+svar_y &lt;- as.matrix(cholesky_data[, cholesky_order])
+
+svar_exogenous_variables &lt;- c(
+  &quot;heating_degree_days&quot;,
+  &quot;cooling_degree_days&quot;,
+  names(var_model_data)[grepl(&quot;^month_&quot;, names(var_model_data))]
+)
+
+svar_exog &lt;- as.matrix(
+  var_model_data[
+    ,
+    svar_exogenous_variables,
+    drop = FALSE
+  ]
+)
+
+svar_lags &lt;- var_fit$lags
+
+svar_reduced_form_fit &lt;- fit_var_ols(
+  y = svar_y,
+  lags = svar_lags,
+  exog = svar_exog
+)
+
+svar_dimensions &lt;- data.frame(
+  object = c(&quot;endogenous data&quot;, &quot;exogenous data&quot;),
+  rows = c(nrow(svar_y), nrow(svar_exog)),
+  columns = c(ncol(svar_y), ncol(svar_exog))
+)
+
+svar_exogenous_variables</code></pre>
+<pre><code>##  [1] &quot;heating_degree_days&quot; &quot;cooling_degree_days&quot; &quot;month_Feb&quot;          
+##  [4] &quot;month_Mar&quot;           &quot;month_Apr&quot;           &quot;month_May&quot;          
+##  [7] &quot;month_Jun&quot;           &quot;month_Jul&quot;           &quot;month_Aug&quot;          
+## [10] &quot;month_Sep&quot;           &quot;month_Oct&quot;           &quot;month_Nov&quot;          
+## [13] &quot;month_Dec&quot;</code></pre>
+<pre class="r"><code>svar_lags</code></pre>
+<pre><code>## [1] 12</code></pre>
+<pre class="r"><code>svar_dimensions</code></pre>
+<pre><code>##            object rows columns
+## 1 endogenous data  251       4
+## 2  exogenous data  251      13</code></pre>
+<pre class="r"><code>set.seed(123)
+
+svar_burn_in_draws &lt;- 200
+svar_posterior_draws &lt;- 500
+svar_thin &lt;- 1
+
+svar_specification &lt;- bsvars::specify_bsvar$new(
+  data = svar_y,
+  p = svar_lags,
+  exogenous = svar_exog
+)
+
+svar_burn_in &lt;- bsvars::estimate(
+  svar_specification,
+  S = svar_burn_in_draws,
+  thin = svar_thin,
+  show_progress = FALSE
+)
+
+svar_posterior &lt;- bsvars::estimate(
+  svar_burn_in,
+  S = svar_posterior_draws,
+  thin = svar_thin,
+  show_progress = FALSE
+)
+
+svar_B_normalisation &lt;- diag(
+  sign(diag(svar_posterior$last_draw$starting_values$B))
+) %*% svar_posterior$last_draw$starting_values$B
+
+if (&quot;normalise_posterior&quot; %in% getNamespaceExports(&quot;bsvars&quot;)) {
+  bsvars::normalise_posterior(
+    svar_posterior,
+    svar_B_normalisation
+  )
+} else {
+  svar_posterior &lt;- bsvars::normalise(
+    svar_posterior,
+    svar_B_normalisation
+  )
+}
+
+summary(svar_posterior)</code></pre>
+<pre><code>##  **************************************************|
+##  bsvars: Bayesian Structural Vector Autoregressions|
+##  **************************************************|
+##    Posterior summary of the parameters             |
+##  **************************************************|</code></pre>
+<pre><code>## $B
+## $B$equation1
+##              mean           sd 5% quantile 95% quantile
+## B[1,1] 0.01311127 0.0005900055  0.01213301    0.0140899
+## 
+## $B$equation2
+##                 mean           sd  5% quantile 95% quantile
+## B[2,1] -0.0001378613 0.0008261201 -0.001451763  0.001301685
+## B[2,2]  8.6912997792 0.4171748688  8.015226996  9.384668385
+## 
+## $B$equation3
+##                 mean           sd  5% quantile 95% quantile
+## B[3,1] -0.0009205578 0.0009146957 -0.002436034 5.124735e-04
+## B[3,2] -0.6498739547 0.6684462723 -1.716362520 3.906559e-01
+## B[3,3] 39.9578955861 2.4154433328 36.332954611 4.389527e+01
+## 
+## $B$equation4
+##                 mean           sd   5% quantile 95% quantile
+## B[4,1] -6.011763e-04 0.0008960907  -0.002013074   0.00082938
+## B[4,2] -8.354319e+00 0.7870221516  -9.667357114  -7.06849864
+## B[4,3] -1.093623e+01 2.8944287626 -15.923785526  -6.03938508
+## B[4,4]  1.236002e+01 0.6462178181  11.305677862  13.41716141
+## 
+## 
+## $A
+## $A$equation1
+##                     mean         sd 5% quantile 95% quantile
+## lag1_var1   1.8456602514 0.06539677  1.74002293   1.95414666
+## lag1_var1   0.0600146330 0.55225916 -0.78436091   0.97356176
+## lag1_var1  -0.0154595591 0.54457600 -0.86306947   0.83353556
+## lag1_var1   0.0189250194 0.58536866 -0.92083211   1.05131951
+## lag2_var1  -0.7136198696 0.12331594 -0.92289424  -0.51143682
+## lag2_var1  -0.0012385518 0.28919676 -0.48984868   0.45586836
+## lag2_var1   0.0330758677 0.30029184 -0.44973585   0.51062405
+## lag2_var1  -0.0265422384 0.29885469 -0.48317452   0.44918851
+## lag3_var1  -0.1184827959 0.09890255 -0.26959585   0.05055989
+## lag3_var1  -0.0053554757 0.18342410 -0.29690461   0.28793720
+## lag3_var1  -0.0181107819 0.19397259 -0.31706002   0.31402578
+## lag3_var1  -0.0011322765 0.18612212 -0.28934403   0.30417968
+## lag4_var2  -0.0182417504 0.08867550 -0.17017672   0.12686349
+## lag4_var2   0.0039342547 0.13625238 -0.22191929   0.21612043
+## lag4_var2   0.0033726038 0.13500992 -0.22277147   0.21472575
+## lag4_var2   0.0073297852 0.13663121 -0.21891819   0.23433519
+## lag5_var2  -0.0006925409 0.07530163 -0.12757812   0.11994129
+## lag5_var2  -0.0082512375 0.11177333 -0.18277181   0.17725256
+## lag5_var2   0.0015853203 0.11040941 -0.18351254   0.18584367
+## lag5_var2  -0.0074321796 0.11511791 -0.19646376   0.18415648
+## lag6_var2   0.0043299805 0.06971350 -0.12343010   0.11467861
+## lag6_var2  -0.0027346650 0.09331395 -0.15775852   0.14337947
+## lag6_var2   0.0013355325 0.09731400 -0.15350395   0.15715945
+## lag6_var2   0.0035293363 0.09580212 -0.15499335   0.14676607
+## lag7_var3   0.0025774910 0.05941039 -0.09209658   0.10632265
+## lag7_var3  -0.0025638295 0.08066077 -0.13719284   0.13280639
+## lag7_var3  -0.0063424654 0.08524543 -0.13909406   0.13482914
+## lag7_var3   0.0065001749 0.07952625 -0.12411046   0.14161306
+## lag8_var3  -0.0038630549 0.05653557 -0.09077108   0.09491449
+## lag8_var3   0.0007896481 0.07129694 -0.11908929   0.10602348
+## lag8_var3  -0.0001246150 0.07527973 -0.12220780   0.12015816
+## lag8_var3   0.0062290835 0.06733766 -0.10668545   0.12508280
+## lag9_var3  -0.0036096243 0.04773829 -0.08203189   0.07691563
+## lag9_var3   0.0042272348 0.06196742 -0.09089252   0.10759062
+## lag9_var3   0.0005167750 0.05935779 -0.09595036   0.09442286
+## lag9_var3   0.0005665856 0.06139334 -0.09592481   0.09614443
+## lag10_var4 -0.0030336505 0.04248537 -0.06769820   0.06770236
+## lag10_var4  0.0011462270 0.05766423 -0.08641711   0.09566328
+## lag10_var4 -0.0038772618 0.06210074 -0.10248687   0.09874130
+## lag10_var4  0.0024271019 0.05277469 -0.08279692   0.08844504
+## lag11_var4 -0.0019200466 0.04039246 -0.06787603   0.06564181
+## lag11_var4 -0.0029359269 0.05139360 -0.09104561   0.07587884
+## lag11_var4 -0.0004779095 0.05214978 -0.08749562   0.08477909
+## lag11_var4 -0.0035246819 0.05336623 -0.08633847   0.08258096
+## lag12_var4  0.0109512912 0.02618314 -0.03304384   0.05299769
+## lag12_var4 -0.0029254845 0.04736399 -0.07873832   0.07602724
+## lag12_var4  0.0003024428 0.04664415 -0.07634824   0.07910748
+## lag12_var4  0.0030662755 0.04922584 -0.07256989   0.08747553
+## const       0.0150700695 0.53957686 -0.84013160   0.93551531
+## exo1        0.0611864095 0.05084138 -0.01985788   0.14065817
+## exo2        0.0968234670 0.16042080 -0.15319766   0.37132653
+## exo3       -0.0073563321 0.58098399 -0.93679657   0.90621060
+## exo4       -0.0749060010 0.58648197 -1.00216636   0.88957982
+## exo5        0.0112524958 0.57065700 -0.91906354   0.89703767
+## exo6        0.0108052539 0.54827967 -0.88337552   0.90033258
+## exo7        0.0386990399 0.55520213 -0.87090286   0.99754200
+## exo8        0.0137270839 0.59042638 -0.82279919   0.97852186
+## exo9        0.0322512656 0.55564847 -0.84969536   0.89375985
+## exo10      -0.0260672677 0.59644945 -0.96825838   0.96458554
+## exo11       0.0087584158 0.55853034 -0.92161690   0.90039032
+## exo12       0.0415495688 0.54542872 -0.82880579   0.92141468
+## exo13       0.0077277022 0.59713438 -0.92929568   1.02716712
+## 
+## $A$equation2
+##                     mean           sd   5% quantile 95% quantile
+## lag1_var1   3.879500e-05 1.023361e-04 -1.188923e-04 0.0002074009
+## lag1_var1   1.046084e+00 4.120572e-02  9.804069e-01 1.1137072702
+## lag1_var1   6.307973e-02 8.424568e-02 -6.585933e-02 0.2058245280
+## lag1_var1   9.295229e-02 5.436199e-02  6.710314e-03 0.1796449274
+## lag2_var1  -3.580132e-05 2.109322e-04 -3.760752e-04 0.0003119275
+## lag2_var1  -2.270549e-02 3.674383e-02 -8.296647e-02 0.0375168512
+## lag2_var1   5.137273e-03 4.733938e-02 -6.786365e-02 0.0829905816
+## lag2_var1  -2.090260e-03 3.568523e-02 -6.014730e-02 0.0607237511
+## lag3_var1  -7.847933e-05 2.098432e-04 -4.220509e-04 0.0002551558
+## lag3_var1  -8.696333e-03 2.854438e-02 -5.141336e-02 0.0414970983
+## lag3_var1   1.297742e-02 2.981733e-02 -3.404926e-02 0.0619446249
+## lag3_var1   2.900240e-02 2.890310e-02 -1.389608e-02 0.0842574252
+## lag4_var2   1.014257e-04 2.159902e-04 -2.158314e-04 0.0004976627
+## lag4_var2  -1.485965e-02 2.144045e-02 -5.136281e-02 0.0187187590
+## lag4_var2   1.550174e-03 2.236438e-02 -3.688208e-02 0.0377953946
+## lag4_var2   1.213366e-02 2.244288e-02 -2.074994e-02 0.0501199424
+## lag5_var2   6.210181e-05 2.145793e-04 -2.929219e-04 0.0003897211
+## lag5_var2  -1.268993e-02 1.678080e-02 -4.209507e-02 0.0132532327
+## lag5_var2  -8.720539e-04 1.791396e-02 -2.926091e-02 0.0285572675
+## lag5_var2   4.074914e-03 1.677401e-02 -2.370508e-02 0.0302566238
+## lag6_var2  -6.407864e-05 2.266175e-04 -4.269085e-04 0.0003197080
+## lag6_var2  -1.102903e-02 1.458857e-02 -3.662824e-02 0.0110177626
+## lag6_var2  -1.405245e-03 1.545672e-02 -2.764127e-02 0.0240748875
+## lag6_var2   8.588156e-04 1.501238e-02 -2.248094e-02 0.0246228592
+## lag7_var3  -5.234273e-05 2.185319e-04 -4.250966e-04 0.0003324553
+## lag7_var3  -2.945662e-03 1.186358e-02 -2.158641e-02 0.0154475827
+## lag7_var3  -1.127672e-03 1.302921e-02 -2.264615e-02 0.0194788859
+## lag7_var3  -1.004321e-03 1.297851e-02 -2.255230e-02 0.0201182504
+## lag8_var3  -7.666487e-05 2.242319e-04 -4.507416e-04 0.0002999224
+## lag8_var3  -1.350254e-03 9.903166e-03 -1.775508e-02 0.0148594131
+## lag8_var3  -1.501477e-04 1.084478e-02 -1.736196e-02 0.0174465997
+## lag8_var3   1.449296e-03 1.096329e-02 -1.704310e-02 0.0197129064
+## lag9_var3   1.136029e-04 2.242362e-04 -2.458413e-04 0.0004872784
+## lag9_var3  -3.354191e-03 9.440003e-03 -1.777640e-02 0.0122354246
+## lag9_var3   5.111561e-04 1.034627e-02 -1.625226e-02 0.0175517058
+## lag9_var3   1.865018e-03 9.605287e-03 -1.410360e-02 0.0176951626
+## lag10_var4  2.577787e-05 2.317121e-04 -3.192566e-04 0.0004200124
+## lag10_var4 -2.952785e-03 8.629454e-03 -1.790526e-02 0.0103715711
+## lag10_var4 -4.529752e-04 9.115683e-03 -1.507252e-02 0.0143952209
+## lag10_var4 -2.147920e-04 8.416188e-03 -1.333610e-02 0.0137474721
+## lag11_var4 -2.721053e-05 2.094585e-04 -3.496224e-04 0.0003042627
+## lag11_var4 -2.992456e-03 8.440766e-03 -1.739133e-02 0.0106277778
+## lag11_var4  1.184204e-03 8.376690e-03 -1.214547e-02 0.0153786060
+## lag11_var4  2.840546e-03 8.509484e-03 -1.076391e-02 0.0165204546
+## lag12_var4 -7.368101e-06 9.483195e-05 -1.607806e-04 0.0001466561
+## lag12_var4 -5.764323e-03 7.450214e-03 -1.815829e-02 0.0054052336
+## lag12_var4  4.769751e-04 7.180757e-03 -1.150190e-02 0.0113496729
+## lag12_var4 -1.550514e-04 7.257143e-03 -1.207274e-02 0.0123160551
+## const       6.985047e-02 5.524343e-02 -1.456836e-02 0.1618488653
+## exo1        1.535886e-04 1.568751e-04 -8.633358e-05 0.0003996622
+## exo2        1.851544e-03 5.966669e-04  8.668058e-04 0.0028757661
+## exo3       -2.582077e-02 3.256929e-02 -7.650104e-02 0.0254280313
+## exo4        4.097970e-02 3.263192e-02 -1.379087e-02 0.0922471478
+## exo5        2.208771e-02 3.430941e-02 -2.881203e-02 0.0802143595
+## exo6        4.996890e-02 4.107686e-02 -1.169880e-02 0.1209884245
+## exo7        1.726871e-02 4.146438e-02 -5.011703e-02 0.0880207458
+## exo8       -5.573464e-02 4.671251e-02 -1.286307e-01 0.0223782515
+## exo9       -2.866051e-02 4.930055e-02 -1.121438e-01 0.0519359114
+## exo10       6.453293e-02 4.227382e-02 -1.075119e-03 0.1360788581
+## exo11       9.293362e-02 4.004212e-02  2.933143e-02 0.1574227014
+## exo12       3.938221e-02 3.543995e-02 -1.502305e-02 0.0985461926
+## exo13       3.922508e-02 3.243014e-02 -1.770309e-02 0.0942145674
+## 
+## $A$equation3
+##                     mean           sd   5% quantile  95% quantile
+## lag1_var1   1.441970e-05 2.477121e-05 -2.673809e-05  5.677708e-05
+## lag1_var1  -6.024234e-03 2.143032e-02 -4.143671e-02  2.817109e-02
+## lag1_var1  -2.817220e-01 7.626763e-02 -4.119809e-01 -1.606878e-01
+## lag1_var1  -1.068596e-02 2.160423e-02 -4.546851e-02  2.575181e-02
+## lag2_var1  -2.893213e-06 5.183264e-05 -8.416203e-05  8.423334e-05
+## lag2_var1   3.017104e-03 2.991129e-02 -4.611146e-02  5.148168e-02
+## lag2_var1  -2.432053e-01 6.795900e-02 -3.523830e-01 -1.324500e-01
+## lag2_var1  -2.365267e-03 2.058525e-02 -3.630594e-02  3.328728e-02
+## lag3_var1  -2.061516e-05 5.045407e-05 -1.083874e-04  6.211147e-05
+## lag3_var1   3.179307e-02 2.748493e-02 -1.469266e-02  7.763404e-02
+## lag3_var1  -1.473944e-01 6.380112e-02 -2.511488e-01 -4.069802e-02
+## lag3_var1  -3.824875e-02 2.069251e-02 -6.991353e-02 -2.984982e-03
+## lag4_var2  -7.368384e-06 5.074855e-05 -8.701146e-05  7.423950e-05
+## lag4_var2  -4.706457e-02 2.567238e-02 -8.779935e-02 -6.195108e-03
+## lag4_var2  -1.603952e-01 5.636446e-02 -2.598138e-01 -7.284111e-02
+## lag4_var2  -5.110440e-04 1.937094e-02 -3.027840e-02  3.236147e-02
+## lag5_var2   1.971778e-05 5.262955e-05 -6.977109e-05  1.059895e-04
+## lag5_var2  -1.031254e-02 2.393405e-02 -4.994951e-02  2.888523e-02
+## lag5_var2  -1.955068e-02 4.600162e-02 -9.685163e-02  5.330936e-02
+## lag5_var2   1.636512e-03 2.002439e-02 -3.413044e-02  3.504935e-02
+## lag6_var2  -1.703006e-05 5.284588e-05 -1.077406e-04  7.236749e-05
+## lag6_var2   1.247872e-02 2.267857e-02 -2.281117e-02  5.155238e-02
+## lag6_var2   3.302340e-02 4.080542e-02 -3.151061e-02  9.930857e-02
+## lag6_var2  -7.608786e-03 1.889580e-02 -3.777862e-02  2.500934e-02
+## lag7_var3   3.072354e-05 5.053031e-05 -6.129954e-05  1.134227e-04
+## lag7_var3   7.147573e-03 2.093248e-02 -2.590797e-02  3.970598e-02
+## lag7_var3   3.772082e-02 3.483329e-02 -2.576253e-02  9.388315e-02
+## lag7_var3   1.115424e-02 1.758968e-02 -1.915003e-02  3.842550e-02
+## lag8_var3  -2.281385e-05 5.281089e-05 -1.107607e-04  6.051454e-05
+## lag8_var3   1.920210e-02 2.144837e-02 -1.615914e-02  5.277937e-02
+## lag8_var3  -1.033137e-02 3.100117e-02 -6.485430e-02  4.057024e-02
+## lag8_var3  -5.836086e-03 1.668143e-02 -3.211868e-02  1.989805e-02
+## lag9_var3  -2.030449e-05 5.293144e-05 -1.118184e-04  6.572668e-05
+## lag9_var3  -1.032847e-02 1.920828e-02 -3.980200e-02  1.849742e-02
+## lag9_var3  -1.245409e-02 2.824272e-02 -5.754229e-02  3.567407e-02
+## lag9_var3   7.890000e-03 1.675556e-02 -1.982430e-02  3.657695e-02
+## lag10_var4  7.798854e-05 5.408807e-05 -1.259870e-05  1.626468e-04
+## lag10_var4  1.698867e-02 1.965443e-02 -1.316564e-02  4.865167e-02
+## lag10_var4 -1.793663e-02 2.695518e-02 -6.400913e-02  2.487516e-02
+## lag10_var4 -1.766704e-02 1.537298e-02 -4.320491e-02  9.277787e-03
+## lag11_var4 -8.276272e-05 4.911525e-05 -1.646876e-04 -2.407570e-06
+## lag11_var4 -1.104021e-02 1.649356e-02 -3.763773e-02  1.724403e-02
+## lag11_var4 -4.380148e-03 2.419382e-02 -4.770328e-02  3.499118e-02
+## lag11_var4 -2.313452e-02 1.454063e-02 -4.848392e-02  6.552078e-05
+## lag12_var4  3.086096e-05 2.251765e-05 -6.986046e-06  6.713675e-05
+## lag12_var4 -1.458082e-02 1.283263e-02 -3.571628e-02  5.144389e-03
+## lag12_var4  3.011462e-02 2.225007e-02 -6.211995e-03  6.671878e-02
+## lag12_var4  2.626735e-03 1.285453e-02 -1.596650e-02  2.284775e-02
+## const       3.221862e-02 3.308435e-02 -1.923074e-02  8.311600e-02
+## exo1        1.088041e-04 7.854778e-05 -1.561536e-05  2.399681e-04
+## exo2        1.223401e-03 2.076077e-04  8.847185e-04  1.567961e-03
+## exo3       -7.832070e-02 1.922220e-02 -1.106739e-01 -4.502367e-02
+## exo4        1.402936e-02 1.825135e-02 -1.583483e-02  4.592780e-02
+## exo5       -1.177380e-01 2.255044e-02 -1.550204e-01 -8.255620e-02
+## exo6        1.054577e-02 2.648026e-02 -3.292379e-02  5.244869e-02
+## exo7       -3.431431e-02 3.015066e-02 -8.364683e-02  1.119843e-02
+## exo8        2.025242e-02 3.274325e-02 -3.261771e-02  7.200482e-02
+## exo9       -2.297986e-01 3.455025e-02 -2.873246e-01 -1.729573e-01
+## exo10      -2.078460e-03 2.844243e-02 -4.635865e-02  4.175980e-02
+## exo11      -5.226385e-03 2.691090e-02 -5.260908e-02  3.978409e-02
+## exo12      -1.998068e-02 2.176535e-02 -5.399702e-02  1.888869e-02
+## exo13      -3.532713e-02 1.877484e-02 -6.537025e-02 -7.791050e-03
+## 
+## $A$equation4
+##                     mean           sd   5% quantile  95% quantile
+## lag1_var1   3.975632e-05 0.0001008618 -0.0001138946  0.0002176401
+## lag1_var1   4.555039e-02 0.0662557832 -0.0604451547  0.1576005643
+## lag1_var1  -1.789287e-01 0.1638839616 -0.4585232034  0.0841610440
+## lag1_var1  -7.755760e-02 0.0757878883 -0.2073656398  0.0465612167
+## lag2_var1   3.658820e-05 0.0002066456 -0.0003355007  0.0003767751
+## lag2_var1  -2.115786e-02 0.0759737497 -0.1503205045  0.0990948742
+## lag2_var1  -6.452872e-02 0.1109371832 -0.2447767319  0.1069139618
+## lag2_var1  -1.753827e-01 0.0630322464 -0.2724118333 -0.0702946361
+## lag3_var1  -1.379236e-04 0.0002198018 -0.0004989501  0.0002211991
+## lag3_var1   1.759332e-02 0.0606980395 -0.0774534187  0.1166571752
+## lag3_var1  -5.691247e-02 0.0768460332 -0.1807661383  0.0715148288
+## lag3_var1  -1.197554e-01 0.0543415211 -0.2086248488 -0.0379074976
+## lag4_var2   5.975286e-05 0.0002304898 -0.0003013449  0.0004452423
+## lag4_var2   4.586653e-03 0.0502436815 -0.0822300618  0.0837775965
+## lag4_var2  -6.146303e-04 0.0677558049 -0.1094666725  0.1089099661
+## lag4_var2  -1.592770e-02 0.0454382629 -0.0896763701  0.0663563445
+## lag5_var2  -1.100017e-05 0.0002282360 -0.0004130684  0.0003549619
+## lag5_var2  -2.396667e-03 0.0419650580 -0.0707476694  0.0611124759
+## lag5_var2   1.275702e-02 0.0524056031 -0.0715533613  0.0929114872
+## lag5_var2  -8.388163e-03 0.0384260069 -0.0713936277  0.0531883916
+## lag6_var2  -4.560173e-05 0.0002219518 -0.0003978703  0.0003003943
+## lag6_var2  -4.084810e-03 0.0358284292 -0.0611063228  0.0547011059
+## lag6_var2   1.026058e-02 0.0439153308 -0.0605798267  0.0856829680
+## lag6_var2   9.083609e-03 0.0366899586 -0.0472585197  0.0711747798
+## lag7_var3   9.602347e-05 0.0002143701 -0.0002266826  0.0004708170
+## lag7_var3  -3.284206e-02 0.0312884007 -0.0868770151  0.0190908509
+## lag7_var3  -2.436459e-03 0.0355821052 -0.0578159431  0.0571815425
+## lag7_var3  -2.313369e-02 0.0310510693 -0.0748357699  0.0218868778
+## lag8_var3  -8.052478e-05 0.0002227280 -0.0004393793  0.0002908368
+## lag8_var3  -5.662362e-03 0.0287043573 -0.0540830691  0.0421848818
+## lag8_var3   1.023915e-03 0.0326595667 -0.0540191522  0.0520013517
+## lag8_var3  -3.154888e-03 0.0278252366 -0.0495396313  0.0435970738
+## lag9_var3   7.634833e-05 0.0002285932 -0.0002941427  0.0004604575
+## lag9_var3  -7.874303e-03 0.0244455251 -0.0479215327  0.0341465261
+## lag9_var3   6.664265e-03 0.0294214170 -0.0405735300  0.0523528919
+## lag9_var3   3.783188e-03 0.0253943958 -0.0384127467  0.0430912355
+## lag10_var4 -6.409472e-05 0.0002345468 -0.0004554781  0.0003251058
+## lag10_var4 -2.486818e-02 0.0235214280 -0.0629385859  0.0120681688
+## lag10_var4  5.255247e-04 0.0272139120 -0.0430746933  0.0430146895
+## lag10_var4  5.434172e-03 0.0245540130 -0.0338358703  0.0435635451
+## lag11_var4  4.943146e-05 0.0002205563 -0.0003187306  0.0003938093
+## lag11_var4 -1.498793e-02 0.0208765400 -0.0492064636  0.0195588877
+## lag11_var4 -1.605551e-03 0.0253359601 -0.0435547149  0.0375572205
+## lag11_var4 -1.311941e-02 0.0216842262 -0.0484368813  0.0199689880
+## lag12_var4 -1.863268e-05 0.0001022188 -0.0001740722  0.0001578350
+## lag12_var4  5.957934e-04 0.0186844764 -0.0304222188  0.0313007976
+## lag12_var4 -3.440934e-03 0.0222287728 -0.0398899536  0.0310228285
+## lag12_var4 -1.093290e-02 0.0206295317 -0.0456317603  0.0201374595
+## const      -1.456261e-01 0.0880458600 -0.2921200774 -0.0030823268
+## exo1        8.631341e-04 0.0002347174  0.0004809006  0.0012149008
+## exo2        3.644128e-03 0.0006902795  0.0024518779  0.0047126574
+## exo3        2.354951e-02 0.0424706866 -0.0450778257  0.0868203511
+## exo4        1.824402e-02 0.0465490666 -0.0586462504  0.0956531800
+## exo5        9.447517e-02 0.0526016147  0.0053287118  0.1777737387
+## exo6        1.611852e-01 0.0695886036  0.0458960194  0.2737346380
+## exo7        1.712828e-01 0.0724066913  0.0546297698  0.2898770281
+## exo8        1.268008e-01 0.0827526648 -0.0069027482  0.2551766550
+## exo9        2.784339e-02 0.0853347510 -0.1174919368  0.1646741786
+## exo10       1.974994e-01 0.0783019999  0.0629799378  0.3243537385
+## exo11       2.125055e-01 0.0670337332  0.1021224341  0.3200063084
+## exo12       1.619790e-01 0.0524551760  0.0803110688  0.2463937036
+## exo13       8.427727e-02 0.0431456965  0.0145434344  0.1552698709
+## 
+## 
+## $hyper
+## $hyper$B
+##                            mean         sd 5% quantile 95% quantile
+## B[1,]_shrinkage        200.3790  157.75271    50.26755     486.0213
+## B[2,]_shrinkage        177.1922  226.00670    43.68341     449.2883
+## B[3,]_shrinkage        309.5149  163.34444   131.22449     645.3570
+## B[4,]_shrinkage        156.9556  102.50513    54.09867     353.2000
+## B[1,]_shrinkage_scale 1736.5744 1048.72256   549.23723    3836.4492
+## B[2,]_shrinkage_scale 1631.6236 1012.33316   508.46996    3630.9675
+## B[3,]_shrinkage_scale 1915.4433 1050.51867   675.63561    4009.9208
+## B[4,]_shrinkage_scale 1558.2522  854.88467   561.77149    3214.4959
+## B_global_scale         174.2195   92.03815    61.42992     353.1964
+## 
+## $hyper$A
+##                              mean          sd 5% quantile 95% quantile
+## A[1,]_shrinkage       0.321395960 0.120824839 0.158749300   0.55910707
+## A[2,]_shrinkage       0.008388652 0.004741741 0.002689879   0.01781825
+## A[3,]_shrinkage       0.079508154 0.021338982 0.050642276   0.12439250
+## A[4,]_shrinkage       0.073482108 0.020265639 0.045356838   0.10643918
+## A[1,]_shrinkage_scale 2.513925520 0.799751787 1.401730369   3.89253821
+## A[2,]_shrinkage_scale 0.232150101 0.142348028 0.068636560   0.47360603
+## A[3,]_shrinkage_scale 1.375514518 0.437034231 0.791591492   2.18275221
+## A[4,]_shrinkage_scale 1.342637818 0.452945496 0.765390939   2.25936902
+## A_global_scale        0.234662594 0.045661194 0.173191587   0.32165685</code></pre>
+<pre class="r"><code>svar_B_matrix &lt;- svar_posterior$last_draw$starting_values$B
+svar_impact_matrix &lt;- solve(svar_B_matrix)
+
+rownames(svar_impact_matrix) &lt;- cholesky_order
+colnames(svar_impact_matrix) &lt;- paste0(cholesky_order, &quot;_shock&quot;)
+
+svar_impact_matrix</code></pre>
+<pre><code>##                               res_capacity_shock log_natural_gas_shock
+## res_capacity                       71.4722691050           0.000000000
+## log_natural_gas                    -0.0066634998           0.109848936
+## d_log_electricity_consumption       0.0005370734           0.001529529
+## d_log_pun                           0.0149096914           0.074134768
+##                               d_log_electricity_consumption_shock
+## res_capacity                                           0.00000000
+## log_natural_gas                                        0.00000000
+## d_log_electricity_consumption                          0.02594598
+## d_log_pun                                              0.02821684
+##                               d_log_pun_shock
+## res_capacity                       0.00000000
+## log_natural_gas                    0.00000000
+## d_log_electricity_consumption      0.00000000
+## d_log_pun                          0.08365575</code></pre>
+<p>The impact matrix is lower triangular because of the recursive
+Cholesky identification. This means that each variable can react within
+the same month to its own shock and to shocks ordered before it. Because
+this is a Bayesian model, the table reports the inverse of the last
+normalised draw of the structural matrix <code>B</code>.</p>
+<pre class="r"><code>svar_structural_shock_draws &lt;- bsvars::compute_structural_shocks(
+  svar_posterior
+)
+
+svar_structural_shocks_median &lt;- t(
+  apply(
+    svar_structural_shock_draws,
+    c(1, 2),
+    median
+  )
+)
+
+svar_shock_dates &lt;- cholesky_data$Date[
+  (svar_lags + 1):nrow(cholesky_data)
+]
+
+svar_structural_shocks &lt;- data.frame(
+  Date = svar_shock_dates,
+  svar_structural_shocks_median,
+  row.names = NULL
+)
+
+names(svar_structural_shocks)[-1] &lt;- paste0(cholesky_order, &quot;_shock&quot;)
+
+summary(svar_structural_shocks[, -1])</code></pre>
+<pre><code>##  res_capacity_shock  log_natural_gas_shock d_log_electricity_consumption_shock
+##  Min.   :-6.306413   Min.   :-4.06825      Min.   :-4.426727                  
+##  1st Qu.:-0.113080   1st Qu.:-0.43351      1st Qu.:-0.471537                  
+##  Median :-0.049848   Median :-0.01261      Median : 0.023958                  
+##  Mean   : 0.007675   Mean   :-0.00843      Mean   : 0.001256                  
+##  3rd Qu.: 0.088290   3rd Qu.: 0.44776      3rd Qu.: 0.569819                  
+##  Max.   : 9.967326   Max.   : 4.14110      Max.   : 2.725484                  
+##  d_log_pun_shock    
+##  Min.   :-3.082859  
+##  1st Qu.:-0.553211  
+##  Median :-0.054610  
+##  Mean   :-0.002582  
+##  3rd Qu.: 0.559168  
+##  Max.   : 2.751376</code></pre>
+<pre class="r"><code>svar_structural_shock_covariance &lt;- crossprod(
+  as.matrix(svar_structural_shocks[, -1])
+) / nrow(svar_structural_shocks)
+
+svar_structural_shock_covariance</code></pre>
+<pre><code>##                                     res_capacity_shock log_natural_gas_shock
+## res_capacity_shock                        0.9755327334         -0.0081112161
+## log_natural_gas_shock                    -0.0081112161          0.9037746964
+## d_log_electricity_consumption_shock      -0.0004264047          0.0016376004
+## d_log_pun_shock                          -0.0910947440          0.0006102469
+##                                     d_log_electricity_consumption_shock
+## res_capacity_shock                                        -0.0004264047
+## log_natural_gas_shock                                      0.0016376004
+## d_log_electricity_consumption_shock                        0.7879751315
+## d_log_pun_shock                                            0.0406806459
+##                                     d_log_pun_shock
+## res_capacity_shock                    -0.0910947440
+## log_natural_gas_shock                  0.0006102469
+## d_log_electricity_consumption_shock    0.0406806459
+## d_log_pun_shock                        0.8357531108</code></pre>
+<p>The covariance matrix of the structural shocks should be close to the
+identity matrix. This is a check that the Cholesky transformation has
+converted the correlated reduced-form residuals into orthogonal
+structural shocks.</p>
+</div>
+<div id="forecast-evaluation-against-a-random-walk" class="section level2">
+<h2>16. Forecast Evaluation Against A Random Walk</h2>
+<p>This section compares the one-step-ahead forecast implied by the
+recursive SVAR specification with a random walk benchmark.</p>
+<p>For unconditional point forecasts, the recursive SVAR and its
+reduced-form VAR produce the same point forecasts. The Cholesky
+identification changes how we interpret shocks, but it does not change
+the baseline conditional mean forecast. For this reason the
+expanding-window forecast below re-estimates the reduced-form VAR
+equations with the same endogenous variables and exogenous regressors
+used in the SVAR.</p>
+<p>The target is PUN. Because the model uses <code>d_log_pun</code>, I
+evaluate one-step-ahead forecasts for:</p>
+<ul>
+<li><code>log_pun</code>, using RMSE and MAE;</li>
+<li>PUN in levels, using RMSE, MAE, and MAPE.</li>
+</ul>
+<p>The random walk benchmark assumes that next period’s
+<code>log_pun</code> remains equal to the latest observed
+<code>log_pun</code>.</p>
+<p>Because the model is estimated for <code>d_log_pun</code>, the
+back-transformation is:</p>
+<p><code>forecast(log_pun[t + 1]) = log_pun[t] + forecast(d_log_pun[t + 1])</code>.</p>
+<p>The level forecast is then obtained as
+<code>exp(forecast(log_pun[t + 1]))</code>. This is the median level
+forecast implied by the log forecast. A mean level forecast would
+require an additional log-normal bias correction.</p>
+<p>The SVAR forecast uses the realised next-period values of the
+exogenous regressors, including <code>heating_degree_days</code> and
+<code>cooling_degree_days</code>. The exercise should therefore be read
+as a conditional forecast comparison. For a real-time forecasting
+exercise, those weather regressors would need to be forecasted or
+lagged.</p>
+<pre class="r"><code>forecast_data &lt;- cholesky_data
+forecast_data$log_pun &lt;- svar_data$log_pun[
+  match(forecast_data$Date, svar_data$Date)
+]
+forecast_data$pun &lt;- exp(forecast_data$log_pun)
+
+forecast_horizons &lt;- 1
+initial_window &lt;- max(156, svar_lags + ncol(svar_reduced_form_fit$x) + 24)
+
+forecast_design &lt;- data.frame(
+  validation_type = &quot;expanding window&quot;,
+  initial_window_months = initial_window,
+  first_forecast_origin = forecast_data$Date[initial_window],
+  last_available_date = forecast_data$Date[nrow(forecast_data)],
+  forecast_horizon = forecast_horizons
+)
+
+forecast_design</code></pre>
+<pre><code>##    validation_type initial_window_months first_forecast_origin
+## 1 expanding window                   156            2018-01-01
+##   last_available_date forecast_horizon
+## 1          2025-12-01                1</code></pre>
+<pre class="r"><code>forecast_var_path &lt;- function(var_fit, y_history, exog_future, horizon) {
+  forecasts &lt;- matrix(
+    NA,
+    nrow = horizon,
+    ncol = ncol(y_history)
+  )
+
+  colnames(forecasts) &lt;- colnames(y_history)
+  y_extended &lt;- y_history
+
+  for (step in seq_len(horizon)) {
+    x_new &lt;- c(constant = 1)
+
+    for (lag in seq_len(var_fit$lags)) {
+      lagged_values &lt;- y_extended[nrow(y_extended) - lag + 1, ]
+      names(lagged_values) &lt;- paste0(names(lagged_values), &quot;_lag&quot;, lag)
+      x_new &lt;- c(x_new, lagged_values)
+    }
+
+    x_new &lt;- c(x_new, exog_future[step, ])
+    x_new &lt;- x_new[rownames(var_fit$beta)]
+
+    forecasts[step, ] &lt;- x_new %*% var_fit$beta
+    y_extended &lt;- rbind(y_extended, forecasts[step, ])
+  }
+
+  forecasts
+}
+
+compute_forecast_metrics &lt;- function(actual, forecast) {
+  error &lt;- actual - forecast
+
+  data.frame(
+    RMSE = sqrt(mean(error^2, na.rm = TRUE)),
+    MAE = mean(abs(error), na.rm = TRUE)
+  )
+}
+
+compute_level_forecast_metrics &lt;- function(actual, forecast) {
+  error &lt;- actual - forecast
+
+  data.frame(
+    RMSE = sqrt(mean(error^2, na.rm = TRUE)),
+    MAE = mean(abs(error), na.rm = TRUE),
+    MAPE = mean(abs(error / actual), na.rm = TRUE) * 100
+  )
+}</code></pre>
+<pre class="r"><code>forecast_results &lt;- list()
+
+for (horizon in forecast_horizons) {
+  forecast_origins &lt;- initial_window:(nrow(forecast_data) - horizon)
+
+  horizon_results &lt;- do.call(
+    rbind,
+    lapply(forecast_origins, function(origin) {
+      train_y &lt;- as.matrix(forecast_data[1:origin, cholesky_order])
+      train_exog &lt;- svar_exog[1:origin, , drop = FALSE]
+      future_exog &lt;- svar_exog[
+        (origin + 1):(origin + horizon),
+        ,
+        drop = FALSE
+      ]
+
+      fit_at_origin &lt;- fit_var_ols(
+        y = train_y,
+        lags = svar_lags,
+        exog = train_exog
+      )
+
+      forecast_path &lt;- forecast_var_path(
+        var_fit = fit_at_origin,
+        y_history = train_y,
+        exog_future = future_exog,
+        horizon = horizon
+      )
+
+      current_log_pun &lt;- forecast_data$log_pun[origin]
+      actual_log_pun &lt;- forecast_data$log_pun[origin + horizon]
+
+      svar_log_pun_forecast &lt;- current_log_pun +
+        sum(forecast_path[, &quot;d_log_pun&quot;])
+
+      random_walk_log_pun_forecast &lt;- current_log_pun
+
+      actual_pun &lt;- exp(actual_log_pun)
+      svar_pun_forecast &lt;- exp(svar_log_pun_forecast)
+      random_walk_pun_forecast &lt;- exp(random_walk_log_pun_forecast)
+
+      data.frame(
+        horizon = horizon,
+        forecast_origin = forecast_data$Date[origin],
+        target_date = forecast_data$Date[origin + horizon],
+        actual_log_pun = actual_log_pun,
+        svar_log_pun_forecast = svar_log_pun_forecast,
+        random_walk_log_pun_forecast = random_walk_log_pun_forecast,
+        actual_pun = actual_pun,
+        svar_pun_forecast = svar_pun_forecast,
+        random_walk_pun_forecast = random_walk_pun_forecast
+      )
+    })
+  )
+
+  forecast_results[[as.character(horizon)]] &lt;- horizon_results
+}
+
+forecast_results &lt;- do.call(rbind, forecast_results)
+row.names(forecast_results) &lt;- NULL
+
+head(forecast_results)</code></pre>
+<pre><code>##   horizon forecast_origin target_date actual_log_pun svar_log_pun_forecast
+## 1       1      2018-01-01  2018-02-01       4.043081              4.076265
+## 2       1      2018-02-01  2018-03-01       4.041533              3.983654
+## 3       1      2018-03-01  2018-04-01       3.899803              4.028502
+## 4       1      2018-04-01  2018-05-01       3.979227              3.952589
+## 5       1      2018-05-01  2018-06-01       4.047467              3.943151
+## 6       1      2018-06-01  2018-07-01       4.138200              4.169149
+##   random_walk_log_pun_forecast actual_pun svar_pun_forecast
+## 1                     3.891785   57.00167          58.92499
+## 2                     4.043081   56.91352          53.71297
+## 3                     4.041533   49.39273          56.17670
+## 4                     3.899803   53.47568          52.07002
+## 5                     3.979227   57.25226          51.58088
+## 6                     4.047467   62.68986          64.66038
+##   random_walk_pun_forecast
+## 1                 48.99826
+## 2                 57.00167
+## 3                 56.91352
+## 4                 49.39273
+## 5                 53.47568
+## 6                 57.25226</code></pre>
+<pre class="r"><code>plot(
+  forecast_results$target_date,
+  forecast_results$actual_pun,
+  type = &quot;l&quot;,
+  col = &quot;black&quot;,
+  lwd = 2,
+  xlab = &quot;Target date&quot;,
+  ylab = &quot;PUN&quot;,
+  main = &quot;One-step-ahead PUN forecast comparison&quot;
+)
+
+lines(
+  forecast_results$target_date,
+  forecast_results$svar_pun_forecast,
+  col = &quot;steelblue&quot;,
+  lwd = 2
+)
+
+lines(
+  forecast_results$target_date,
+  forecast_results$random_walk_pun_forecast,
+  col = &quot;firebrick&quot;,
+  lwd = 2,
+  lty = 2
+)
+
+legend(
+  &quot;topleft&quot;,
+  legend = c(&quot;Actual PUN&quot;, &quot;SVAR forecast&quot;, &quot;Random walk forecast&quot;),
+  col = c(&quot;black&quot;, &quot;steelblue&quot;, &quot;firebrick&quot;),
+  lwd = c(2, 2, 2),
+  lty = c(1, 1, 2),
+  bty = &quot;n&quot;
+)
+
+grid()</code></pre>
+<p><img role="img" src="data:image/png;base64,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8ZAQDw0CIiEeEuIhoRc0AvaBeEiIhwYBkRAPCfGQIGAE7APxkBAPDQIiIR4S4iFBwLQBAwBALCBgAACAACBgAACAACBgAACAACBgAACAACDgFjrtSYiHhHhoEBAJ8ZAQDwm9oIvT7eft26FvTw/iISEeGgREQjwkxEPSE4/ZHTf3DudkRHxOFuIhIR4aBERCPCTEQ4KAPaHBOCbIjZggNyKCzIiJ0LmxnYshdCRBhdyICXIjIsiMmAidG9u5GEJHElTIjZggNyKCzIiJ0LmxnYshdCRBhdyICXIjIsiMmAidG9u5GEJHElTIjZggNyKCzIiJ0LmxnYshdCRBhdyICXIjIsiMmAidG9u5GEJHElTIjZggNyKCzIiJ0LmxnYshdCRBhdyICXIjIsiMmAidG9u5GEJHElTIjZggNyKCzIiJ0LmxnYshdCRBhdyICXIjIsiMmAidG9u5GEJHElTIjZggNyKCzIiJ0LmxnYshdCRBhdyICXIjIsiMmAidG9u5GEJHElTIjZggNyKCzIiJ0LmxnYshdCRBhdyICXIjIsiMmAidG9u5GEJHElTIjZggNyKCzIiJ0LmxnYshdCRBhdyICXIjIsiMmAidG9u5GEJHElTIjZggNyKCzIiJ0LmxnYshdCRBhdyICXIjIsiMmAidG9u5GEJHElTIjZggNyKCzIiJ0LnBxQAAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABAABAwAABCAhAS8e/Uwy7J7j950i+5enGfZmbqk4M9vv/h79+mDdR2YiEtuOOcYTGRcbli2gumM/Nco+Xye/bBOKk+Fkbmxe1csevjs08LJS0fA7w5Bq/hGX3T2V3XF3fOsE/Du52arx2smdvO45IZzjsFExuWGZSuYzsh/jZI/v80Q8KyMzI3PzaL7fzd2OSvJCPg263hgLFIu2t1Vpgj4qlsHA8+HS2445xhMZFxuWLaC6Yz816i44j9jXkbmRuvfLPty2TJwKgIufhref3148+HJ4afLT+2iN9USpcj7PFM+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" width="960" /></p>
+<pre class="r"><code>log_forecast_metrics &lt;- do.call(
+  rbind,
+  lapply(forecast_horizons, function(horizon) {
+    horizon_results &lt;- forecast_results[
+      forecast_results$horizon == horizon,
+    ]
+
+    svar_metrics &lt;- compute_forecast_metrics(
+      actual = horizon_results$actual_log_pun,
+      forecast = horizon_results$svar_log_pun_forecast
+    )
+
+    random_walk_metrics &lt;- compute_forecast_metrics(
+      actual = horizon_results$actual_log_pun,
+      forecast = horizon_results$random_walk_log_pun_forecast
+    )
+
+    rbind(
+      data.frame(horizon = horizon, model = &quot;Recursive SVAR&quot;, svar_metrics),
+      data.frame(horizon = horizon, model = &quot;Random walk&quot;, random_walk_metrics)
+    )
+  })
+)
+
+level_forecast_metrics &lt;- do.call(
+  rbind,
+  lapply(forecast_horizons, function(horizon) {
+    horizon_results &lt;- forecast_results[
+      forecast_results$horizon == horizon,
+    ]
+
+    svar_metrics &lt;- compute_level_forecast_metrics(
+      actual = horizon_results$actual_pun,
+      forecast = horizon_results$svar_pun_forecast
+    )
+
+    random_walk_metrics &lt;- compute_level_forecast_metrics(
+      actual = horizon_results$actual_pun,
+      forecast = horizon_results$random_walk_pun_forecast
+    )
+
+    rbind(
+      data.frame(horizon = horizon, model = &quot;Recursive SVAR&quot;, svar_metrics),
+      data.frame(horizon = horizon, model = &quot;Random walk&quot;, random_walk_metrics)
+    )
+  })
+)
+
+log_forecast_metrics</code></pre>
+<pre><code>##   horizon          model      RMSE       MAE
+## 1       1 Recursive SVAR 0.1891946 0.1409014
+## 2       1    Random walk 0.1713723 0.1243985</code></pre>
+<pre class="r"><code>level_forecast_metrics</code></pre>
+<pre><code>##   horizon          model     RMSE      MAE     MAPE
+## 1       1 Recursive SVAR 40.61476 20.98748 14.40603
+## 2       1    Random walk 40.24735 19.17927 12.69474</code></pre>
+<pre class="r"><code>relative_rmse &lt;- merge(
+  log_forecast_metrics[
+    log_forecast_metrics$model == &quot;Recursive SVAR&quot;,
+    c(&quot;horizon&quot;, &quot;RMSE&quot;, &quot;MAE&quot;)
+  ],
+  log_forecast_metrics[
+    log_forecast_metrics$model == &quot;Random walk&quot;,
+    c(&quot;horizon&quot;, &quot;RMSE&quot;, &quot;MAE&quot;)
+  ],
+  by = &quot;horizon&quot;,
+  suffixes = c(&quot;_svar&quot;, &quot;_random_walk&quot;)
+)
+
+relative_rmse$svar_rmse_relative_to_random_walk &lt;-
+  relative_rmse$RMSE_svar / relative_rmse$RMSE_random_walk
+
+relative_rmse$svar_mae_relative_to_random_walk &lt;-
+  relative_rmse$MAE_svar / relative_rmse$MAE_random_walk
+
+relative_rmse</code></pre>
+<pre><code>##   horizon RMSE_svar  MAE_svar RMSE_random_walk MAE_random_walk
+## 1       1 0.1891946 0.1409014        0.1713723       0.1243985
+##   svar_rmse_relative_to_random_walk svar_mae_relative_to_random_walk
+## 1                          1.103997                         1.132662</code></pre>
+<p>Values below 1 mean that the recursive SVAR forecast performs better
+than the random walk benchmark for that metric and horizon.</p>
+</div>
 
 
 
