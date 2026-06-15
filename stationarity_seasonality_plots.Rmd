@@ -421,9 +421,9 @@ svar_input <- svar_model_data[
 ]
 
 estimation_start <- as.Date("2005-01-01")
-estimation_end <- as.Date("2018-12-01")
-test_start <- as.Date("2019-01-01")
-test_end <- as.Date("2024-12-01")
+estimation_end <- as.Date("2019-12-01")
+test_start <- as.Date("2020-01-01")
+test_end <- as.Date("2025-12-01")
 
 estimation_sample <- svar_input[
   svar_input$Date >= estimation_start & svar_input$Date <= estimation_end,
@@ -478,6 +478,48 @@ var_fit <- vars::VAR(
   type = "const",
   exogen = exog_estimation
 )
+
+diagnostic_tests <- list(
+  Portmanteau = vars::serial.test(
+    var_fit,
+    lags.pt = selected_lag + 12,
+    type = "PT.asymptotic"
+  )$serial,
+  "Jarque-Bera" = vars::normality.test(
+    var_fit,
+    multivariate.only = TRUE
+  )$jb.mul$JB,
+  ARCH = vars::arch.test(
+    var_fit,
+    lags.multi = 5,
+    multivariate.only = TRUE
+  )$arch.mul
+)
+
+diagnostic_p_values <- sapply(
+  diagnostic_tests,
+  function(test) as.numeric(test$p.value)
+)
+
+var_diagnostics <- data.frame(
+  test = names(diagnostic_tests),
+  statistic = round(
+    sapply(diagnostic_tests, function(test) as.numeric(test$statistic)),
+    3
+  ),
+  df = sapply(
+    diagnostic_tests,
+    function(test) as.numeric(test$parameter)
+  ),
+  p_value = signif(diagnostic_p_values, 3),
+  decision_5pct = ifelse(
+    diagnostic_p_values < 0.05,
+    "reject H0",
+    "do not reject H0"
+  )
+)
+
+var_diagnostics
 
 # summary(var_fit)
 ```
