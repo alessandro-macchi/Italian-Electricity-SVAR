@@ -421,8 +421,8 @@ svar_input <- svar_model_data[
 ]
 
 estimation_start <- as.Date("2005-01-01")
-estimation_end <- as.Date("2019-12-01")
-test_start <- as.Date("2020-01-01")
+estimation_end <- as.Date("2018-12-01")
+test_start <- as.Date("2019-01-01")
 test_end <- as.Date("2025-12-01")
 
 estimation_sample <- svar_input[

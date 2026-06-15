@@ -755,8 +755,8 @@ svar_input &lt;- svar_model_data[
 ]
 
 estimation_start &lt;- as.Date(&quot;2005-01-01&quot;)
-estimation_end &lt;- as.Date(&quot;2019-12-01&quot;)
-test_start &lt;- as.Date(&quot;2020-01-01&quot;)
+estimation_end &lt;- as.Date(&quot;2018-12-01&quot;)
+test_start &lt;- as.Date(&quot;2019-01-01&quot;)
 test_end &lt;- as.Date(&quot;2025-12-01&quot;)
 
 estimation_sample &lt;- svar_input[
@@ -787,8 +787,8 @@ sample_sizes &lt;- data.frame(
 
 sample_sizes</code></pre>
 <pre><code>##       sample      start        end observations
-## 1 estimation 2005-02-01 2019-12-01          179
-## 2       test 2020-01-01 2025-12-01           72</code></pre>
+## 1 estimation 2005-02-01 2018-12-01          167
+## 2       test 2019-01-01 2025-12-01           84</code></pre>
 </div>
 <div id="lag-selection-and-reduced-form-var" class="section level2">
 <h2>8. Lag Selection And Reduced-Form VAR</h2>
@@ -803,20 +803,20 @@ sample_sizes</code></pre>
 
 lag_selection$criteria</code></pre>
 <pre><code>##                    1             2             3             4             5
-## AIC(n) -1.782922e+01 -1.788213e+01 -1.795785e+01 -1.815988e+01 -1.813175e+01
-## HQ(n)  -1.742001e+01 -1.740472e+01 -1.741223e+01 -1.754606e+01 -1.744973e+01
-## SC(n)  -1.682100e+01 -1.670588e+01 -1.661356e+01 -1.664756e+01 -1.645140e+01
-## FPE(n)  1.811191e-08  1.720414e-08  1.598143e-08  1.309168e-08  1.350875e-08
+## AIC(n) -1.788713e+01 -1.791261e+01 -1.796318e+01 -1.813463e+01 -1.810830e+01
+## HQ(n)  -1.745647e+01 -1.741017e+01 -1.738896e+01 -1.748863e+01 -1.739052e+01
+## SC(n)  -1.682684e+01 -1.667561e+01 -1.654946e+01 -1.654420e+01 -1.634115e+01
+## FPE(n)  1.710362e-08  1.670462e-08  1.592068e-08  1.345566e-08  1.387105e-08
 ##                    6             7             8             9            10
-## AIC(n) -1.811065e+01 -1.810901e+01 -1.814161e+01 -1.816903e+01 -1.812952e+01
-## HQ(n)  -1.736043e+01 -1.729059e+01 -1.725499e+01 -1.721420e+01 -1.710649e+01
-## SC(n)  -1.626226e+01 -1.609259e+01 -1.595715e+01 -1.581653e+01 -1.560898e+01
-## FPE(n)  1.385180e-08  1.394143e-08  1.357180e-08  1.329402e-08  1.393882e-08
+## AIC(n) -1.807288e+01 -1.805381e+01 -1.808347e+01 -1.811145e+01 -1.805815e+01
+## HQ(n)  -1.728333e+01 -1.719248e+01 -1.715036e+01 -1.710656e+01 -1.698149e+01
+## SC(n)  -1.612902e+01 -1.593323e+01 -1.578617e+01 -1.563744e+01 -1.540743e+01
+## FPE(n)  1.444327e-08  1.481081e-08  1.448227e-08  1.420309e-08  1.513014e-08
 ##                   11            12
-## AIC(n) -1.810584e+01 -1.812722e+01
-## HQ(n)  -1.701461e+01 -1.696779e+01
-## SC(n)  -1.541727e+01 -1.527062e+01
-## FPE(n)  1.440268e-08  1.424523e-08</code></pre>
+## AIC(n) -1.801710e+01 -1.801229e+01
+## HQ(n)  -1.686865e+01 -1.679207e+01
+## SC(n)  -1.518966e+01 -1.500814e+01
+## FPE(n)  1.594646e-08  1.623607e-08</code></pre>
 <pre class="r"><code>selected_lag &lt;- 12 # as.integer(lag_selection$selection[[&quot;AIC(n)&quot;]])
 selected_lag # 12 for annual seasonality</code></pre>
 <pre><code>## [1] 12</code></pre>
@@ -869,9 +869,9 @@ var_diagnostics &lt;- data.frame(
 
 var_diagnostics</code></pre>
 <pre><code>##                    test statistic  df  p_value    decision_5pct
-## Portmanteau Portmanteau   195.226 108 5.62e-07        reject H0
-## Jarque-Bera Jarque-Bera    16.937   6 9.52e-03        reject H0
-## ARCH               ARCH   164.419 180 7.91e-01 do not reject H0</code></pre>
+## Portmanteau Portmanteau   192.614 108 1.03e-06        reject H0
+## Jarque-Bera Jarque-Bera    26.388   6 1.88e-04        reject H0
+## ARCH               ARCH   165.362 180 7.76e-01 do not reject H0</code></pre>
 <pre class="r"><code># summary(var_fit)</code></pre>
 </div>
 <div id="cholesky-a-matrix-and-svar-estimation" class="section level2">
@@ -931,22 +931,22 @@ summary(svar_fit)</code></pre>
 ## vars::SVAR(x = var_fit, estmethod = &quot;scoring&quot;, Amat = amat, Bmat = NULL)
 ## 
 ## Type: A-model 
-## Sample size: 167 
-## Log Likelihood: 864.452 
+## Sample size: 155 
+## Log Likelihood: 796.371 
 ## Method: scoring 
-## Number of iterations: 61 
+## Number of iterations: 60 
 ## 
 ## Estimated A matrix:
 ##                          log_natural_gas d_log_energy_consumption d_log_pun
-## log_natural_gas                  16.1145                     0.00      0.00
-## d_log_energy_consumption         -0.9792                    53.38      0.00
-## d_log_pun                        -4.9026                   -19.38     14.53
+## log_natural_gas                   16.236                     0.00      0.00
+## d_log_energy_consumption          -0.830                    52.69      0.00
+## d_log_pun                         -4.754                   -18.67     14.06
 ## 
 ## Estimated standard errors for A matrix:
 ##                          log_natural_gas d_log_energy_consumption d_log_pun
-## log_natural_gas                   0.8817                    0.000    0.0000
-## d_log_energy_consumption          1.2481                    2.921    0.0000
-## d_log_pun                         1.2778                    4.265    0.7949
+## log_natural_gas                   0.9221                    0.000    0.0000
+## d_log_energy_consumption          1.3049                    2.993    0.0000
+## d_log_pun                         1.3334                    4.363    0.7983
 ## 
 ## Estimated B matrix:
 ##                          log_natural_gas d_log_energy_consumption d_log_pun
@@ -956,9 +956,9 @@ summary(svar_fit)</code></pre>
 ## 
 ## Covariance matrix of reduced form residuals (*100):
 ##                          log_natural_gas d_log_energy_consumption d_log_pun
-## log_natural_gas                 0.385095                 0.007064   0.13939
-## d_log_energy_consumption        0.007064                 0.035224   0.04938
-## d_log_pun                       0.139386                 0.049383   0.58679</code></pre>
+## log_natural_gas                 0.379361                 0.005976   0.13624
+## d_log_energy_consumption        0.005976                 0.036116   0.04998
+## d_log_pun                       0.136236                 0.049980   0.61857</code></pre>
 </div>
 <div id="recursive-one-step-pun-forecast-evaluation" class="section level2">
 <h2>10. Recursive One-Step PUN Forecast Evaluation</h2>
@@ -1141,12 +1141,12 @@ pun_forecast_accuracy &lt;- cbind(
 )
 
 pun_forecast_accuracy</code></pre>
-<pre><code>##   variable rmse_svar  rmse_rw mae_svar  mae_rw  theils_u clark_west_statistic
-## 1      pun   45.5078 46.14753 25.66307 23.9798 0.9861372             1.348872
+<pre><code>##   variable rmse_svar  rmse_rw mae_svar   mae_rw  theils_u clark_west_statistic
+## 1      pun  42.15226 42.75393 22.39927 21.05154 0.9859272             1.358126
 ##   clark_west_p_value_one_sided dm_statistic dm_p_value_two_sided
-## 1                   0.08868902   -0.1670958            0.8672947
+## 1                   0.08721185   -0.1700104             0.865002
 ##   dm_p_value_svar_lower_loss
-## 1                  0.4336473</code></pre>
+## 1                   0.432501</code></pre>
 </div>
 
 
