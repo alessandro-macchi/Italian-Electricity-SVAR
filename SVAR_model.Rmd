@@ -15,6 +15,8 @@ The goal is not to decide the final model yet. In this first step, we only compa
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   echo = TRUE,
+  collapse = TRUE,
+  comment = "#>",
   warning = FALSE,
   message = FALSE,
   fig.width = 10,
@@ -36,6 +38,10 @@ save_plot <- function(file_name, plot_code) {
   png(file_name, width = 10, height = 5, units = "in", res = 300)
   on.exit(dev.off())
   force(plot_code)
+}
+
+compact_table <- function(x, row_names = FALSE) {
+  knitr::kable(x, row.names = row_names)
 }
 ```
 
@@ -93,7 +99,21 @@ cons <- read_semicolon_series("energy_consumption.csv", "Volumi MWh", "Electrici
 
 all_data <- rbind(pun, gas, res, hdd, cdd, cons)
 
-summary(all_data)
+data_coverage <- do.call(
+  rbind,
+  lapply(split(all_data, all_data$variable), function(x) {
+    data.frame(
+      variable = x$variable[1],
+      start = min(x$Date, na.rm = TRUE),
+      end = max(x$Date, na.rm = TRUE),
+      observations = nrow(x),
+      missing_values = sum(is.na(x$value))
+    )
+  })
+)
+
+row.names(data_coverage) <- NULL
+compact_table(data_coverage)
 ```
 
 ## 2. Keep The Common Monthly Sample
@@ -119,7 +139,13 @@ plot_data$month_name <- factor(
   levels = months(as.Date(paste0("2025-", sprintf("%02d", 1:12), "-01")))
 )
 
-table(plot_data$variable)
+sample_counts <- as.data.frame(
+  table(plot_data$variable),
+  responseName = "observations"
+)
+names(sample_counts)[1] <- "variable"
+
+compact_table(sample_counts)
 ```
 
 ## 3. Variables In Levels
@@ -134,74 +160,55 @@ For each variable, we plot:
 
 If the time series has a clear trend, or if the ACF decays very slowly, the variable may not be stationary in levels.
 
-```{r level-time-series}
+```{r level-diagnostics, fig.show='hold', out.width='32%', fig.width=5, fig.height=3.5}
 variables <- unique(plot_data$variable)
 
-for (v in variables) {
-  x <- plot_data[plot_data$variable == v, ]
+plot_level <- function(x, variable) {
+  plot(
+    x$Date,
+    x$value,
+    type = "l",
+    main = paste(variable, "- level"),
+    xlab = "Date",
+    ylab = variable,
+    col = "steelblue",
+    lwd = 2
+  )
+  grid()
+}
 
-  plot_level <- function() {
-    plot(
-      x$Date,
-      x$value,
-      type = "l",
-      main = paste(v, "- level"),
-      xlab = "Date",
-      ylab = v,
-      col = "steelblue",
-      lwd = 2
-    )
-    grid()
-  }
-
-  plot_level()
-
-  save_plot(
-    make_plot_name(v, "level_time_series.png"),
-    plot_level()
+plot_acf <- function(x, variable) {
+  acf(
+    x$value,
+    lag.max = 36,
+    main = paste(variable, "- ACF in levels")
   )
 }
-```
 
-```{r level-acf}
-for (v in variables) {
-  x <- plot_data[plot_data$variable == v, ]
-
-  plot_acf <- function() {
-    acf(
-      x$value,
-      lag.max = 36,
-      main = paste(v, "- ACF in levels")
-    )
-  }
-
-  plot_acf()
-
-  save_plot(
-    make_plot_name(v, "acf_levels.png"),
-    plot_acf()
+plot_pacf <- function(x, variable) {
+  pacf(
+    x$value,
+    lag.max = 36,
+    main = paste(variable, "- PACF in levels")
   )
 }
-```
 
-```{r level-pacf}
+level_plot_functions <- list(
+  level_time_series = plot_level,
+  acf_levels = plot_acf,
+  pacf_levels = plot_pacf
+)
+
 for (v in variables) {
   x <- plot_data[plot_data$variable == v, ]
 
-  plot_pacf <- function() {
-    pacf(
-      x$value,
-      lag.max = 36,
-      main = paste(v, "- PACF in levels")
+  for (plot_type in names(level_plot_functions)) {
+    level_plot_functions[[plot_type]](x, v)
+    save_plot(
+      make_plot_name(v, paste0(plot_type, ".png")),
+      level_plot_functions[[plot_type]](x, v)
     )
   }
-
-  plot_pacf()
-
-  save_plot(
-    make_plot_name(v, "pacf_levels.png"),
-    plot_pacf()
-  )
 }
 ```
 
@@ -225,12 +232,16 @@ svar_long$value[svar_long$variable %in% log_variables] <- log(
   svar_long$value[svar_long$variable %in% log_variables]
 )
 
-svar_long$variable[svar_long$variable == "PUN"] <- "log_pun"
-svar_long$variable[svar_long$variable == "Natural gas"] <- "log_natural_gas"
-svar_long$variable[svar_long$variable == "Electricity consumption"] <- "log_electricity_consumption"
-svar_long$variable[svar_long$variable == "RES capacity"] <- "res_capacity"
-svar_long$variable[svar_long$variable == "Heating degree days"] <- "heating_degree_days"
-svar_long$variable[svar_long$variable == "Cooling degree days"] <- "cooling_degree_days"
+variable_names <- c(
+  "PUN" = "log_pun",
+  "Natural gas" = "log_natural_gas",
+  "Electricity consumption" = "log_electricity_consumption",
+  "RES capacity" = "res_capacity",
+  "Heating degree days" = "heating_degree_days",
+  "Cooling degree days" = "cooling_degree_days"
+)
+
+svar_long$variable <- unname(variable_names[svar_long$variable])
 
 svar_data <- reshape(
   svar_long[, c("Date", "variable", "value")],
@@ -278,29 +289,34 @@ adf_variables <- names(svar_data)[
 
 adf_lag <- 12
 
-adf_results <- do.call(
-  rbind,
-  lapply(adf_variables, function(v) {
+adf_conclusion <- function(p_value) {
+  ifelse(
+    p_value < 0.05,
+    "Reject unit root: stationary",
+    "Do not reject unit root: non-stationary"
+  )
+}
+
+run_adf_tests <- function(data, variables, lags) {
+  do.call(rbind, lapply(variables, function(v) {
     test <- tseries::adf.test(
-      na.omit(svar_data[[v]]),
-      k = adf_lag
+      na.omit(data[[v]]),
+      k = lags
     )
 
     data.frame(
       variable = v,
-      lags = adf_lag,
+      lags = lags,
       adf_statistic = as.numeric(test$statistic),
       p_value = test$p.value,
-      conclusion = ifelse(
-        test$p.value < 0.05,
-        "Reject unit root: stationary",
-        "Do not reject unit root: non-stationary"
-      )
+      conclusion = adf_conclusion(test$p.value)
     )
-  })
-)
+  }))
+}
 
-adf_results
+adf_results <- run_adf_tests(svar_data, adf_variables, adf_lag)
+
+compact_table(adf_results)
 ```
 
 ## 6. First Differences For Non-Stationary Logged Variables
@@ -320,29 +336,13 @@ for (v in diff_variables) {
   diff_data[[paste0("d_", v)]] <- diff(svar_data[[v]])
 }
 
-diff_adf_results <- do.call(
-  rbind,
-  lapply(names(diff_data)[names(diff_data) != "Date"], function(v) {
-    test <- tseries::adf.test(
-      na.omit(diff_data[[v]]),
-      k = adf_lag
-    )
-
-    data.frame(
-      variable = v,
-      lags = adf_lag,
-      adf_statistic = as.numeric(test$statistic),
-      p_value = test$p.value,
-      conclusion = ifelse(
-        test$p.value < 0.05,
-        "Reject unit root: stationary",
-        "Do not reject unit root: non-stationary"
-      )
-    )
-  })
+diff_adf_results <- run_adf_tests(
+  diff_data,
+  names(diff_data)[names(diff_data) != "Date"],
+  adf_lag
 )
 
-diff_adf_results
+compact_table(diff_adf_results)
 ```
 
 ## 7. Structural VAR With Cholesky Identification
@@ -355,8 +355,8 @@ The Cholesky ordering is:
 2. `d_log_energy_consumption`;
 3. `d_log_pun`.
 
-The VAR is estimated on January 2010 to December 2018.
-The pseudo out-of-sample evaluation is January 2019 to December 2024.
+The VAR is estimated on January 2005 to December 2018.
+The pseudo out-of-sample evaluation is January 2019 to December 2025.
 
 The weather variables, renewable capacity, and monthly dummies enter as
 exogenous variables. In the recursive forecast exercise, their realised values
@@ -451,13 +451,13 @@ sample_sizes <- data.frame(
   observations = c(nrow(estimation_sample), nrow(test_sample))
 )
 
-sample_sizes
+compact_table(sample_sizes)
 ```
 
 ## 8. Lag Selection And Reduced-Form VAR
 
-The lag order is selected by Schwarz criterion, using `VARselect()` with
-`lag.max = 12`.
+The information criteria are reported using `VARselect()` with `lag.max = 12`.
+For this baseline, I keep 12 lags to allow annual seasonality in monthly data.
 
 ```{r lag-selection-and-var}
 lag_selection <- vars::VARselect(
@@ -467,10 +467,16 @@ lag_selection <- vars::VARselect(
   exogen = exog_estimation
 )
 
-lag_selection$criteria
+lag_selection_criteria <- as.data.frame(t(lag_selection$criteria))
+lag_selection_criteria$lag <- as.integer(row.names(lag_selection_criteria))
+lag_selection_criteria <- lag_selection_criteria[
+  c("lag", row.names(lag_selection$criteria))
+]
+
+compact_table(lag_selection_criteria)
 
 selected_lag <- 12 # as.integer(lag_selection$selection[["AIC(n)"]])
-selected_lag # 12 for annual seasonality
+compact_table(data.frame(selected_lag = selected_lag))
 
 var_fit <- vars::VAR(
   y = endog_estimation,
@@ -519,7 +525,7 @@ var_diagnostics <- data.frame(
   )
 )
 
-var_diagnostics
+compact_table(var_diagnostics)
 
 # summary(var_fit)
 ```
@@ -559,7 +565,7 @@ if (!identification_check$exactly_identified) {
 }
 
 amat
-identification_check
+compact_table(identification_check)
 
 svar_fit <- vars::SVAR(
   x = var_fit,
@@ -568,7 +574,7 @@ svar_fit <- vars::SVAR(
   Bmat = NULL
 )
 
-summary(svar_fit)
+svar_fit$A
 ```
 
 ## 10. Recursive One-Step PUN Forecast Evaluation
@@ -707,32 +713,6 @@ clark_west_test <- function(actual, model_forecast, rw_forecast) {
   )
 }
 
-diebold_mariano_test <- function(actual, model_forecast, rw_forecast) {
-  model_error <- actual - model_forecast
-  rw_error <- actual - rw_forecast
-  loss_difference <- model_error^2 - rw_error^2
-  loss_difference <- loss_difference[is.finite(loss_difference)]
-
-  if (length(loss_difference) < 2 || sd(loss_difference) == 0) {
-    return(
-      data.frame(
-        dm_statistic = NA_real_,
-        dm_p_value_two_sided = NA_real_,
-        dm_p_value_svar_lower_loss = NA_real_
-      )
-    )
-  }
-
-  statistic <- mean(loss_difference) /
-    (sd(loss_difference) / sqrt(length(loss_difference)))
-
-  data.frame(
-    dm_statistic = statistic,
-    dm_p_value_two_sided = 2 * pnorm(-abs(statistic)),
-    dm_p_value_svar_lower_loss = pnorm(statistic)
-  )
-}
-
 pun_forecast_accuracy <- cbind(
   variable = "pun",
   forecast_metrics(
@@ -744,13 +724,8 @@ pun_forecast_accuracy <- cbind(
     recursive_forecasts$actual_pun,
     recursive_forecasts$forecast_pun,
     recursive_forecasts$rw_pun
-  ),
-  diebold_mariano_test(
-    recursive_forecasts$actual_pun,
-    recursive_forecasts$forecast_pun,
-    recursive_forecasts$rw_pun
   )
 )
 
-pun_forecast_accuracy
+compact_table(pun_forecast_accuracy)
 ```
