@@ -228,7 +228,7 @@ lag_selection <- select_var_lags(
   lag_max = experiment_config$lag_max
 )
 
-compact_table(lag_selection$criteria_table)
+# compact_table(lag_selection$criteria_table)
 
 selected_lag <- experiment_config$selected_lag
 compact_table(data.frame(selected_lag = selected_lag))
@@ -295,10 +295,4 @@ pun_forecast_accuracy <- forecast_accuracy_table(
 )
 
 compact_table(pun_forecast_accuracy)
-
-plot_forecast_comparison(recursive_forecasts)
-save_plot(
-  make_plot_name("pun", "var_rw_forecast_comparison.png"),
-  plot_forecast_comparison(recursive_forecasts)
-)
 ```

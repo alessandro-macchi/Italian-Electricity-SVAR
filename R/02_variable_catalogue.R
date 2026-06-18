@@ -46,7 +46,7 @@ variable_catalogue <- data.frame(
   model_variant = c(
     "d_log",
     "log",
-    "d_level",
+    "d_log",
     "level",
     "level",
     "d_log"
