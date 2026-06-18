@@ -1,16 +1,16 @@
 ---
-title: "First Visual Stationarity Checks"
-author: "Thesis SVAR project"
+title: "Energy SVAR Analysis"
+author: "Alessandro Macchi"
 date: "`r Sys.Date()`"
 output: html_document
 ---
 
-This notebook gives a first visual check of the variables that may enter the SVAR.
+This notebook is the readable report layer for the thesis SVAR project.
 
-The goal is not to decide the final model yet. In this first step, we only compare:
-
-- plots in levels;
-- ACF and PACF plots, which help us see persistence.
+The reusable code lives in `R/`. The most important file for experimentation is
+`R/02_variable_catalogue.R`: when a new candidate variable is added, its raw
+file, raw column, active model variant, role, and current SVAR order should be
+described there first.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -23,132 +23,76 @@ knitr::opts_chunk$set(
   fig.height = 5
 )
 
-plots_dir <- "plots"
-dir.create(plots_dir, showWarnings = FALSE)
-
-make_plot_name <- function(variable, plot_type) {
-  variable_name <- tolower(variable)
-  variable_name <- gsub("[^a-z0-9]+", "_", variable_name)
-  variable_name <- gsub("^_|_$", "", variable_name)
-
-  file.path(plots_dir, paste(variable_name, plot_type, sep = "_"))
-}
-
-save_plot <- function(file_name, plot_code) {
-  png(file_name, width = 10, height = 5, units = "in", res = 300)
-  on.exit(dev.off())
-  force(plot_code)
-}
-
-compact_table <- function(x, row_names = FALSE) {
-  knitr::kable(x, row.names = row_names)
-}
-```
-
-## 1. Load The Data
-
-```{r load-data}
-data_dir <- "data"
-
-parse_month <- function(x) {
-  as.Date(paste0("01-", x), format = "%d-%m-%Y")
-}
-
-parse_euro_number <- function(x) {
-  x <- gsub("\\.", "", x)
-  x <- gsub(",", ".", x)
-  as.numeric(x)
-}
-
-read_semicolon_series <- function(file, value_name, new_name) {
-  raw <- read.csv(
-    file.path(data_dir, file),
-    sep = ";",
-    stringsAsFactors = FALSE,
-    check.names = FALSE
+project_scripts <- file.path(
+  "R",
+  c(
+    "00_config.R",
+    "01_io.R",
+    "02_variable_catalogue.R",
+    "03_prepare_data.R",
+    "04_transformations.R",
+    "05_diagnostics.R",
+    "06_var_svar.R",
+    "07_forecasting.R",
+    "08_plotting.R"
   )
-
-  data.frame(
-    Date = parse_month(raw$Date),
-    value = parse_euro_number(raw[[value_name]]),
-    variable = new_name
-  )
-}
-
-read_comma_series <- function(file, value_name, new_name) {
-  raw <- read.csv(
-    file.path(data_dir, file),
-    sep = ",",
-    stringsAsFactors = FALSE,
-    check.names = FALSE
-  )
-
-  data.frame(
-    Date = parse_month(raw$Date),
-    value = as.numeric(raw[[value_name]]),
-    variable = new_name
-  )
-}
-
-pun <- read_semicolon_series("pun.csv", "PUN (€/MWh)", "PUN")
-gas <- read_semicolon_series("natural_gas.csv", "Natural gas Europe (€/MWh)", "Natural gas")
-res <- read_comma_series("italy_res_capacity_monthly.csv", "RES Installed Capacity (MW)", "RES capacity")
-hdd <- read_comma_series("hdd.csv", "heating_degree_days", "Heating degree days")
-cdd <- read_comma_series("cdd.csv", "cooling_degree_days", "Cooling degree days")
-cons <- read_semicolon_series("energy_consumption.csv", "Volumi MWh", "Electricity consumption")
-
-all_data <- rbind(pun, gas, res, hdd, cdd, cons)
-
-data_coverage <- do.call(
-  rbind,
-  lapply(split(all_data, all_data$variable), function(x) {
-    data.frame(
-      variable = x$variable[1],
-      start = min(x$Date, na.rm = TRUE),
-      end = max(x$Date, na.rm = TRUE),
-      observations = nrow(x),
-      missing_values = sum(is.na(x$value))
-    )
-  })
 )
 
-row.names(data_coverage) <- NULL
+invisible(lapply(project_scripts, source))
+ensure_project_dirs()
+```
+
+## 1. Variable Catalogue
+
+This catalogue is the central place where candidate variables and the current
+experiment are described.
+
+To quickly try another specification, change:
+
+- `model_variant`: `level`, `log`, `d_level`, or `d_log`;
+- `role`: `endogenous`, `exogenous`, or `unused`;
+- `svar_order`: Cholesky order, only for endogenous variables.
+
+```{r variable-catalogue}
+catalogue_view <- describe_variable_catalogue(variable_catalogue)
+compact_table(catalogue_view)
+```
+
+## 2. Load The Data
+
+The raw monthly series are loaded using the catalogue. This avoids one
+hard-coded `read.csv()` call per variable in the notebook.
+
+```{r load-data}
+all_data <- load_catalogue_data(variable_catalogue)
+
+data_coverage <- summarise_data_coverage(all_data)
 compact_table(data_coverage)
 ```
 
-## 2. Keep The Common Monthly Sample
+## 3. Keep The Common Monthly Sample
 
 For a VAR or SVAR, all variables need to be observed over the same dates.
-The common sample is from January 2005 to December 2025.
+The current common sample is from January 2005 to December 2025.
 
-I also exclude 2026 here because the June 2026 electricity consumption observation looks incomplete.
+I also exclude 2026 here because the June 2026 electricity consumption
+observation looks incomplete.
 
 ```{r common-sample}
-start_date <- as.Date("2005-01-01")
-end_date <- as.Date("2025-12-01")
-
-plot_data <- all_data[
-  all_data$Date >= start_date &
-    all_data$Date <= end_date,
-]
-
-plot_data$year <- as.numeric(format(plot_data$Date, "%Y"))
-plot_data$month <- as.numeric(format(plot_data$Date, "%m"))
-plot_data$month_name <- factor(
-  months(plot_data$Date),
-  levels = months(as.Date(paste0("2025-", sprintf("%02d", 1:12), "-01")))
+prepared_data <- prepare_candidate_data(
+  all_data,
+  catalogue = variable_catalogue,
+  config = experiment_config
 )
 
-sample_counts <- as.data.frame(
-  table(plot_data$variable),
-  responseName = "observations"
-)
-names(sample_counts)[1] <- "variable"
+plot_data <- prepared_data$plot_data
+svar_data <- prepared_data$svar_data
 
+sample_counts <- summarise_sample_counts(plot_data)
 compact_table(sample_counts)
 ```
 
-## 3. Variables In Levels
+## 4. Variables In Levels
 
 This section looks at the original variables.
 
@@ -158,574 +102,203 @@ For each variable, we plot:
 - the ACF;
 - the PACF.
 
-If the time series has a clear trend, or if the ACF decays very slowly, the variable may not be stationary in levels.
+If the time series has a clear trend, or if the ACF decays very slowly, the
+variable may not be stationary in levels.
 
 ```{r level-diagnostics, fig.show='hold', out.width='32%', fig.width=5, fig.height=3.5}
-variables <- unique(plot_data$variable)
-
-plot_level <- function(x, variable) {
-  plot(
-    x$Date,
-    x$value,
-    type = "l",
-    main = paste(variable, "- level"),
-    xlab = "Date",
-    ylab = variable,
-    col = "steelblue",
-    lwd = 2
-  )
-  grid()
-}
-
-plot_acf <- function(x, variable) {
-  acf(
-    x$value,
-    lag.max = 36,
-    main = paste(variable, "- ACF in levels")
-  )
-}
-
-plot_pacf <- function(x, variable) {
-  pacf(
-    x$value,
-    lag.max = 36,
-    main = paste(variable, "- PACF in levels")
-  )
-}
-
-level_plot_functions <- list(
-  level_time_series = plot_level,
-  acf_levels = plot_acf,
-  pacf_levels = plot_pacf
-)
-
-for (v in variables) {
-  x <- plot_data[plot_data$variable == v, ]
-
-  for (plot_type in names(level_plot_functions)) {
-    level_plot_functions[[plot_type]](x, v)
-    save_plot(
-      make_plot_name(v, paste0(plot_type, ".png")),
-      level_plot_functions[[plot_type]](x, v)
-    )
-  }
-}
+plot_level_diagnostics(plot_data)
 ```
 
-## 4. Preliminary Transformations
+## 5. Preliminary Transformations
 
-This chunk prepares a first dataset for the SVAR analysis.
+This step prepares a first dataset for the SVAR analysis.
 
-I log-transform PUN, natural gas, and electricity consumption.
-I also add monthly dummies, using January as the reference month.
+The current experiment uses the `model_variant` selected in the catalogue.
+Monthly dummies are also added, using January as the reference month.
 
 ```{r preliminary-transformations}
-svar_long <- plot_data
+transformation_plan <- describe_variable_catalogue(variable_catalogue)
 
-log_variables <- c("PUN", "Natural gas", "Electricity consumption")
+compact_table(transformation_plan)
 
-if (any(svar_long$value[svar_long$variable %in% log_variables] <= 0, na.rm = TRUE)) {
-  stop("Log transformation requires strictly positive values.")
-}
-
-svar_long$value[svar_long$variable %in% log_variables] <- log(
-  svar_long$value[svar_long$variable %in% log_variables]
-)
-
-variable_names <- c(
-  "PUN" = "log_pun",
-  "Natural gas" = "log_natural_gas",
-  "Electricity consumption" = "log_electricity_consumption",
-  "RES capacity" = "res_capacity",
-  "Heating degree days" = "heating_degree_days",
-  "Cooling degree days" = "cooling_degree_days"
-)
-
-svar_long$variable <- unname(variable_names[svar_long$variable])
-
-svar_data <- reshape(
-  svar_long[, c("Date", "variable", "value")],
-  idvar = "Date",
-  timevar = "variable",
-  direction = "wide"
-)
-
-names(svar_data) <- sub("^value\\.", "", names(svar_data))
-svar_data <- svar_data[order(svar_data$Date), ]
-row.names(svar_data) <- NULL
-
-svar_data$month <- factor(
-  format(svar_data$Date, "%m"),
-  levels = sprintf("%02d", 1:12),
-  labels = month.abb
-)
-
-month_dummies <- model.matrix(~ month, data = svar_data)[, -1]
-colnames(month_dummies) <- paste0("month_", month.abb[-1])
-
-svar_data <- cbind(svar_data, month_dummies)
-svar_data$month <- NULL
+preview_columns <- c("Date", get_active_model_columns(variable_catalogue))
+compact_table(head(svar_data[, preview_columns]))
 ```
 
-## 5. ADF Stationarity Tests
+## 6. ADF Stationarity Tests
 
 The Augmented Dickey-Fuller test has this null hypothesis:
 
 - the variable has a unit root, so it is not stationary.
 
-If the p-value is below 0.05, we reject the null and treat the variable as stationary.
-This is still a preliminary check, not the final modelling decision.
+If the p-value is below 0.05, we reject the null and treat the variable as
+stationary. This is still a preliminary check, not the final modelling decision.
 I use 12 lags because the data are monthly.
 
 ```{r adf-tests}
-if (!requireNamespace("tseries", quietly = TRUE)) {
-  stop("Package 'tseries' is needed for the ADF test. Install it with install.packages('tseries').")
-}
+adf_variables <- get_catalogue_model_columns(variable_catalogue)
 
-adf_variables <- names(svar_data)[
-  names(svar_data) != "Date" &
-    !grepl("^month_", names(svar_data))
-]
-
-adf_lag <- 12
-
-adf_conclusion <- function(p_value) {
-  ifelse(
-    p_value < 0.05,
-    "Reject unit root: stationary",
-    "Do not reject unit root: non-stationary"
-  )
-}
-
-run_adf_tests <- function(data, variables, lags) {
-  do.call(rbind, lapply(variables, function(v) {
-    test <- tseries::adf.test(
-      na.omit(data[[v]]),
-      k = lags
-    )
-
-    data.frame(
-      variable = v,
-      lags = lags,
-      adf_statistic = as.numeric(test$statistic),
-      p_value = test$p.value,
-      conclusion = adf_conclusion(test$p.value)
-    )
-  }))
-}
-
-adf_results <- run_adf_tests(svar_data, adf_variables, adf_lag)
+adf_results <- run_adf_tests(
+  svar_data,
+  variables = adf_variables,
+  lags = experiment_config$adf_lag
+)
 
 compact_table(adf_results)
 ```
 
-## 6. First Differences For Non-Stationary Logged Variables
+## 7. First Differences For Active Differenced Variables
 
-The previous ADF test suggests that `log_pun` and `log_electricity_consumption`
-may still be non-stationary. As a next preliminary step, I take first differences
-of these two logged variables and run the ADF test again.
+The previous ADF test suggests that some logged variables may still be
+non-stationary. As a next preliminary step, I inspect the active catalogue
+variables whose `model_variant` is `d_level` or `d_log`.
 
 ```{r first-difference-adf-tests}
-diff_variables <- c("log_pun", "log_electricity_consumption")
-
-diff_data <- data.frame(
-  Date = svar_data$Date[-1]
-)
-
-for (v in diff_variables) {
-  diff_data[[paste0("d_", v)]] <- diff(svar_data[[v]])
-}
+diff_variables <- get_difference_columns(variable_catalogue)
 
 diff_adf_results <- run_adf_tests(
-  diff_data,
-  names(diff_data)[names(diff_data) != "Date"],
-  adf_lag
+  svar_data,
+  variables = diff_variables,
+  lags = experiment_config$adf_lag
 )
 
 compact_table(diff_adf_results)
 ```
 
-## 7. Structural VAR With Cholesky Identification
+## 8. Structural VAR With Cholesky Identification
 
-This section estimates the thesis baseline SVAR.
+This section estimates the current baseline SVAR.
 
-The Cholesky ordering is:
-
-1. `log_natural_gas`;
-2. `d_log_energy_consumption`;
-3. `d_log_pun`.
+The current Cholesky ordering is read from `svar_order` in the catalogue.
 
 The VAR is estimated on January 2005 to December 2018.
 The pseudo out-of-sample evaluation is January 2019 to December 2025.
 
-The weather variables, renewable capacity, and monthly dummies enter as
-exogenous variables. In the recursive forecast exercise, their realised values
-are used for the next month, so the exercise is conditional on these exogenous
-paths.
+The variables marked as exogenous in the catalogue, plus monthly dummies, enter
+as external regressors. In the recursive forecast exercise, their realised
+values are used for the next month, so the exercise is conditional on these
+exogenous paths.
 
 ```{r svar-data-input}
-if (!requireNamespace("vars", quietly = TRUE)) {
-  stop("Package 'vars' is needed for the VAR and SVAR models. Install it with install.packages('vars').")
-}
-
-svar_variables <- c(
-  "log_natural_gas",
-  "d_log_energy_consumption",
-  "d_log_pun"
+svar_variables <- get_svar_variables(variable_catalogue)
+exogenous_variables <- get_exogenous_variables(
+  svar_data,
+  catalogue = variable_catalogue,
+  include_month_dummies = experiment_config$include_month_dummies
 )
 
-monthly_dummy_variables <- grep("^month_", names(svar_data), value = TRUE)
-
-exogenous_variables <- c(
-  "heating_degree_days",
-  "cooling_degree_days",
-  "res_capacity",
-  monthly_dummy_variables
+svar_input <- build_svar_input(
+  svar_data,
+  catalogue = variable_catalogue,
+  config = experiment_config
 )
 
-svar_model_data <- svar_data[order(svar_data$Date), ]
-
-# Data input placeholder for the final cleaned modelling dataset.
-# If the data cleaning step is later moved to a separate script, replace
-# this object with the imported final dataset with the same column names.
-svar_model_data$d_log_energy_consumption <- c(
-  NA,
-  diff(svar_model_data$log_electricity_consumption)
-)
-svar_model_data$d_log_pun <- c(
-  NA,
-  diff(svar_model_data$log_pun)
+model_samples <- make_model_samples(
+  svar_input,
+  svar_variables = svar_variables,
+  exogenous_variables = exogenous_variables,
+  config = experiment_config
 )
 
-required_svar_columns <- c(
-  "Date",
-  "log_natural_gas",
-  "log_electricity_consumption",
-  "log_pun",
+estimation_sample <- model_samples$estimation_sample
+test_sample <- model_samples$test_sample
+endog_estimation <- model_samples$endog_estimation
+exog_estimation <- model_samples$exog_estimation
+
+model_variable_table <- make_model_variable_table(
   svar_variables,
   exogenous_variables
 )
 
-missing_svar_columns <- setdiff(required_svar_columns, names(svar_model_data))
+compact_table(model_variable_table)
 
-if (length(missing_svar_columns) > 0) {
-  stop(
-    "The SVAR dataset is missing these columns: ",
-    paste(missing_svar_columns, collapse = ", ")
-  )
-}
-
-svar_input <- svar_model_data[
-  complete.cases(svar_model_data[, required_svar_columns]),
-  required_svar_columns
-]
-
-estimation_start <- as.Date("2005-01-01")
-estimation_end <- as.Date("2018-12-01")
-test_start <- as.Date("2019-01-01")
-test_end <- as.Date("2025-12-01")
-
-estimation_sample <- svar_input[
-  svar_input$Date >= estimation_start & svar_input$Date <= estimation_end,
-]
-
-test_sample <- svar_input[
-  svar_input$Date >= test_start & svar_input$Date <= test_end,
-]
-
-if (nrow(estimation_sample) == 0) {
-  stop("The estimation sample is empty.")
-}
-
-if (nrow(test_sample) == 0) {
-  stop("The test sample is empty.")
-}
-
-endog_estimation <- as.matrix(estimation_sample[, svar_variables])
-exog_estimation <- as.matrix(estimation_sample[, exogenous_variables])
-
-sample_sizes <- data.frame(
-  sample = c("estimation", "test"),
-  start = c(min(estimation_sample$Date), min(test_sample$Date)),
-  end = c(max(estimation_sample$Date), max(test_sample$Date)),
-  observations = c(nrow(estimation_sample), nrow(test_sample))
-)
-
+sample_sizes <- summarise_sample_sizes(estimation_sample, test_sample)
 compact_table(sample_sizes)
 ```
 
-## 8. Lag Selection And Reduced-Form VAR
+## 9. Lag Selection And Reduced-Form VAR
 
 The information criteria are reported using `VARselect()` with `lag.max = 12`.
 For this baseline, I keep 12 lags to allow annual seasonality in monthly data.
 
 ```{r lag-selection-and-var}
-lag_selection <- vars::VARselect(
-  y = endog_estimation,
-  lag.max = 12,
-  type = "const",
-  exogen = exog_estimation
+lag_selection <- select_var_lags(
+  endog = endog_estimation,
+  exog = exog_estimation,
+  lag_max = experiment_config$lag_max
 )
 
-lag_selection_criteria <- as.data.frame(t(lag_selection$criteria))
-lag_selection_criteria$lag <- as.integer(row.names(lag_selection_criteria))
-lag_selection_criteria <- lag_selection_criteria[
-  c("lag", row.names(lag_selection$criteria))
-]
+compact_table(lag_selection$criteria_table)
 
-compact_table(lag_selection_criteria)
-
-selected_lag <- 12 # as.integer(lag_selection$selection[["AIC(n)"]])
+selected_lag <- experiment_config$selected_lag
 compact_table(data.frame(selected_lag = selected_lag))
 
-var_fit <- vars::VAR(
-  y = endog_estimation,
-  p = selected_lag,
-  type = "const",
-  exogen = exog_estimation
+var_fit <- fit_reduced_form_var(
+  endog = endog_estimation,
+  exog = exog_estimation,
+  selected_lag = selected_lag
 )
 
-diagnostic_tests <- list(
-  Portmanteau = vars::serial.test(
-    var_fit,
-    lags.pt = selected_lag + 12,
-    type = "PT.asymptotic"
-  )$serial,
-  "Jarque-Bera" = vars::normality.test(
-    var_fit,
-    multivariate.only = TRUE
-  )$jb.mul$JB,
-  ARCH = vars::arch.test(
-    var_fit,
-    lags.multi = 5,
-    multivariate.only = TRUE
-  )$arch.mul
-)
-
-diagnostic_p_values <- sapply(
-  diagnostic_tests,
-  function(test) as.numeric(test$p.value)
-)
-
-var_diagnostics <- data.frame(
-  test = names(diagnostic_tests),
-  statistic = round(
-    sapply(diagnostic_tests, function(test) as.numeric(test$statistic)),
-    3
-  ),
-  df = sapply(
-    diagnostic_tests,
-    function(test) as.numeric(test$parameter)
-  ),
-  p_value = signif(diagnostic_p_values, 3),
-  decision_5pct = ifelse(
-    diagnostic_p_values < 0.05,
-    "reject H0",
-    "do not reject H0"
-  )
-)
-
+var_diagnostics <- summarise_var_diagnostics(var_fit, selected_lag)
 compact_table(var_diagnostics)
 
 # summary(var_fit)
 ```
 
-## 9. Cholesky A-Matrix And SVAR Estimation
+## 10. Cholesky A-Matrix And SVAR Estimation
 
-For an A-model in `vars::SVAR()`, the `NA` entries are estimated and the
-numeric entries are restrictions.
+For an A-model in `vars::SVAR()`, the `NA` entries are estimated and the numeric
+entries are restrictions.
 
-With three variables, exact identification requires
-`K * (K - 1) / 2 = 3` restrictions. These are the three zero restrictions above
-the diagonal. The three lower off-diagonal entries are the contemporaneous
-Cholesky transmission parameters.
+For recursive Cholesky identification, exact identification requires
+`K * (K - 1) / 2` zero restrictions above the diagonal. The helper below checks
+this for the currently selected endogenous block.
 
 ```{r svar-cholesky}
-k_endog <- length(svar_variables)
-
-amat <- matrix(NA, nrow = k_endog, ncol = k_endog)
-rownames(amat) <- svar_variables
-colnames(amat) <- svar_variables
-amat[upper.tri(amat)] <- 0
-
-needed_restrictions <- k_endog * (k_endog - 1) / 2
-zero_restrictions <- sum(amat[upper.tri(amat)] == 0)
-free_lower_off_diagonal <- sum(is.na(amat[lower.tri(amat)]))
-
-identification_check <- data.frame(
-  k_endog = k_endog,
-  needed_zero_restrictions = needed_restrictions,
-  imposed_zero_restrictions = zero_restrictions,
-  free_lower_off_diagonal_parameters = free_lower_off_diagonal,
-  exactly_identified = zero_restrictions == needed_restrictions
-)
-
-if (!identification_check$exactly_identified) {
-  stop("The Cholesky A-matrix is not exactly identified.")
-}
+amat <- make_cholesky_amat(svar_variables)
+identification_check <- check_cholesky_identification(amat)
 
 amat
 compact_table(identification_check)
 
-svar_fit <- vars::SVAR(
-  x = var_fit,
-  estmethod = "scoring",
-  Amat = amat,
-  Bmat = NULL
-)
-
+svar_fit <- fit_svar_cholesky(var_fit, amat)
 svar_fit$A
 ```
 
-## 10. Recursive One-Step PUN Forecast Evaluation
+## 11. Recursive One-Step PUN Forecast Evaluation
 
-For point forecasts, the SVAR and the reduced-form VAR imply the same conditional
-mean. The recursive exercise therefore re-estimates the reduced-form VAR each
-month and then converts the one-step PUN forecasts back to levels.
+For point forecasts, the SVAR and the reduced-form VAR imply the same
+conditional mean. The recursive exercise therefore re-estimates the reduced-form
+VAR each month and then converts the one-step PUN forecasts back to levels.
 
 The random walk benchmark is:
 
 - next PUN level equals the last observed PUN level.
 
-The Diebold-Mariano test compares the squared forecast errors of the SVAR and
-the random walk. The null hypothesis is equal predictive accuracy.
+The Clark-West test compares the squared forecast errors of the SVAR and the
+random walk with a nesting adjustment. The null hypothesis is equal predictive
+accuracy.
 
 ```{r recursive-forecast-evaluation}
-forecast_indices <- which(
-  svar_input$Date >= test_start & svar_input$Date <= test_end
+recursive_forecasts <- run_recursive_forecasts(
+  data = svar_input,
+  svar_variables = svar_variables,
+  exogenous_variables = exogenous_variables,
+  selected_lag = selected_lag,
+  catalogue = variable_catalogue,
+  config = experiment_config
 )
 
-forecast_one_step <- function(forecast_index) {
-  forecast_date <- svar_input$Date[forecast_index]
-
-  recursive_train <- svar_input[
-    svar_input$Date >= estimation_start &
-      svar_input$Date < forecast_date,
-  ]
-
-  recursive_endog <- as.matrix(recursive_train[, svar_variables])
-  recursive_exog <- as.matrix(recursive_train[, exogenous_variables])
-
-  recursive_var <- vars::VAR(
-    y = recursive_endog,
-    p = selected_lag,
-    type = "const",
-    exogen = recursive_exog
-  )
-
-  next_exog <- as.matrix(
-    svar_input[forecast_index, exogenous_variables, drop = FALSE]
-  )
-  colnames(next_exog) <- exogenous_variables
-
-  new_regressors <- data.frame(matrix(nrow = 1, ncol = 0))
-
-  for (lag in seq_len(selected_lag)) {
-    lagged_values <- svar_input[
-      forecast_index - lag,
-      svar_variables,
-      drop = FALSE
-    ]
-    names(lagged_values) <- paste0(names(lagged_values), ".l", lag)
-    new_regressors <- cbind(new_regressors, lagged_values)
-  }
-
-  new_regressors$const <- 1
-  new_regressors <- cbind(new_regressors, as.data.frame(next_exog))
-
-  endog_forecast <- sapply(
-    svar_variables,
-    function(variable) {
-      coefficients <- coef(recursive_var$varresult[[variable]])
-      coefficients[is.na(coefficients)] <- 0
-
-      missing_regressors <- setdiff(names(coefficients), names(new_regressors))
-
-      if (length(missing_regressors) > 0) {
-        stop(
-          "Missing recursive forecast regressors: ",
-          paste(missing_regressors, collapse = ", ")
-        )
-      }
-
-      sum(
-        as.numeric(new_regressors[1, names(coefficients)]) *
-          coefficients
-      )
-    }
-  )
-
-  previous_index <- forecast_index - 1
-
-  data.frame(
-    Date = forecast_date,
-    forecast_pun = exp(
-      svar_input$log_pun[previous_index] +
-        endog_forecast[["d_log_pun"]]
-    ),
-    actual_pun = exp(svar_input$log_pun[forecast_index]),
-    rw_pun = exp(svar_input$log_pun[previous_index])
-  )
-}
-
-recursive_forecasts <- do.call(
-  rbind,
-  lapply(forecast_indices, forecast_one_step)
-)
-
-forecast_metrics <- function(actual, model_forecast, rw_forecast) {
-  model_error <- actual - model_forecast
-  rw_error <- actual - rw_forecast
-
-  rmse_model <- sqrt(mean(model_error^2, na.rm = TRUE))
-  rmse_rw <- sqrt(mean(rw_error^2, na.rm = TRUE))
-
-  data.frame(
-    rmse_svar = rmse_model,
-    rmse_rw = rmse_rw,
-    mae_svar = mean(abs(model_error), na.rm = TRUE),
-    mae_rw = mean(abs(rw_error), na.rm = TRUE),
-    theils_u = rmse_model / rmse_rw
-  )
-}
-
-clark_west_test <- function(actual, model_forecast, rw_forecast) {
-  model_error <- actual - model_forecast
-  rw_error <- actual - rw_forecast
-  adjustment <- (model_forecast - rw_forecast)^2
-  cw_series <- rw_error^2 - (model_error^2 - adjustment)
-  cw_series <- cw_series[is.finite(cw_series)]
-
-  if (length(cw_series) < 2 || sd(cw_series) == 0) {
-    return(
-      data.frame(
-        clark_west_statistic = NA_real_,
-        clark_west_p_value_one_sided = NA_real_
-      )
-    )
-  }
-
-  statistic <- mean(cw_series) / (sd(cw_series) / sqrt(length(cw_series)))
-
-  data.frame(
-    clark_west_statistic = statistic,
-    clark_west_p_value_one_sided = 1 - pnorm(statistic)
-  )
-}
-
-pun_forecast_accuracy <- cbind(
-  variable = "pun",
-  forecast_metrics(
-    recursive_forecasts$actual_pun,
-    recursive_forecasts$forecast_pun,
-    recursive_forecasts$rw_pun
-  ),
-  clark_west_test(
-    recursive_forecasts$actual_pun,
-    recursive_forecasts$forecast_pun,
-    recursive_forecasts$rw_pun
-  )
+pun_forecast_accuracy <- forecast_accuracy_table(
+  recursive_forecasts,
+  target_name = experiment_config$forecast_target_name
 )
 
 compact_table(pun_forecast_accuracy)
+
+plot_forecast_comparison(recursive_forecasts)
+save_plot(
+  make_plot_name("pun", "var_rw_forecast_comparison.png"),
+  plot_forecast_comparison(recursive_forecasts)
+)
 ```
