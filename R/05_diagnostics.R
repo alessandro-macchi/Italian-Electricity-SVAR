@@ -78,24 +78,52 @@ summarise_sample_sizes <- function(estimation_sample, test_sample) {
   )
 }
 
+run_ljung_box_tests <- function(var_fit, lag) {
+  residual_matrix <- stats::residuals(var_fit)
+  residual_matrix <- residual_matrix[complete.cases(residual_matrix), , drop = FALSE]
+  lag <- min(lag, nrow(residual_matrix) - 1)
+
+  if (lag < 1) {
+    stop("Not enough residual observations to run the Ljung-Box test.")
+  }
+
+  tests <- lapply(seq_len(ncol(residual_matrix)), function(i) {
+    stats::Box.test(
+      residual_matrix[, i],
+      lag = lag,
+      type = "Ljung-Box"
+    )
+  })
+
+  names(tests) <- paste("Ljung-Box", colnames(residual_matrix), sep = ": ")
+  tests
+}
+
 summarise_var_diagnostics <- function(var_fit, selected_lag) {
   require_package("vars", "VAR diagnostics")
 
-  diagnostic_tests <- list(
-    Portmanteau = vars::serial.test(
-      var_fit,
-      lags.pt = selected_lag + 12,
-      type = "PT.asymptotic"
-    )$serial,
-    "Jarque-Bera" = vars::normality.test(
-      var_fit,
-      multivariate.only = TRUE
-    )$jb.mul$JB,
-    ARCH = vars::arch.test(
-      var_fit,
-      lags.multi = 5,
-      multivariate.only = TRUE
-    )$arch.mul
+  autocorrelation_lag <- selected_lag + 12
+
+  diagnostic_tests <- c(
+    list(
+      Portmanteau = vars::serial.test(
+        var_fit,
+        lags.pt = autocorrelation_lag,
+        type = "PT.asymptotic"
+      )$serial
+    ),
+    run_ljung_box_tests(var_fit, lag = autocorrelation_lag),
+    list(
+      "Jarque-Bera" = vars::normality.test(
+        var_fit,
+        multivariate.only = TRUE
+      )$jb.mul$JB,
+      ARCH = vars::arch.test(
+        var_fit,
+        lags.multi = 5,
+        multivariate.only = TRUE
+      )$arch.mul
+    )
   )
 
   diagnostic_p_values <- sapply(

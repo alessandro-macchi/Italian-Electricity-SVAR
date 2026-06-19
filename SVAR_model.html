@@ -11,7 +11,7 @@
 
 <meta name="author" content="Alessandro Macchi" />
 
-<meta name="date" content="2026-06-18" />
+<meta name="date" content="2026-06-19" />
 
 <title>Energy SVAR Analysis</title>
 
@@ -352,7 +352,7 @@ display: none;
 
 <h1 class="title toc-ignore">Energy SVAR Analysis</h1>
 <h4 class="author">Alessandro Macchi</h4>
-<h4 class="date">2026-06-18</h4>
+<h4 class="date">2026-06-19</h4>
 
 </div>
 
@@ -1089,6 +1089,13 @@ var_fit &lt;- fit_reduced_form_var(
 var_diagnostics &lt;- summarise_var_diagnostics(var_fit, selected_lag)
 compact_table(var_diagnostics)</code></pre>
 <table>
+<colgroup>
+<col width="51%" />
+<col width="12%" />
+<col width="5%" />
+<col width="10%" />
+<col width="21%" />
+</colgroup>
 <thead>
 <tr class="header">
 <th align="left">test</th>
@@ -1104,6 +1111,34 @@ compact_table(var_diagnostics)</code></pre>
 <td align="right">221.289</td>
 <td align="right">192</td>
 <td align="right">0.07240</td>
+<td align="left">do not reject H0</td>
+</tr>
+<tr class="even">
+<td align="left">Ljung-Box: d_log_res_capacity</td>
+<td align="right">11.012</td>
+<td align="right">24</td>
+<td align="right">0.98900</td>
+<td align="left">do not reject H0</td>
+</tr>
+<tr class="odd">
+<td align="left">Ljung-Box: log_natural_gas</td>
+<td align="right">12.176</td>
+<td align="right">24</td>
+<td align="right">0.97800</td>
+<td align="left">do not reject H0</td>
+</tr>
+<tr class="even">
+<td align="left">Ljung-Box: d_log_electricity_consumption</td>
+<td align="right">19.018</td>
+<td align="right">24</td>
+<td align="right">0.75100</td>
+<td align="left">do not reject H0</td>
+</tr>
+<tr class="odd">
+<td align="left">Ljung-Box: d_log_pun</td>
+<td align="right">30.190</td>
+<td align="right">24</td>
+<td align="right">0.17900</td>
 <td align="left">do not reject H0</td>
 </tr>
 <tr class="even">
