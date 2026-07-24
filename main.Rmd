@@ -1,0 +1,221 @@
+---
+title: "SVAR Analysis of the Italian Electricity Market"
+subtitle: "Identification by Sign Restrictions (Kilian & Lütkepohl, 2017, Ch. 13)"
+author: "Alessandro Macchi"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = "center")
+
+source("00_config.R")
+source("01_load_data.R")
+source("02_transform.R")
+source("03_sanity_checks.R")
+source("04_var_model.R")
+source("05_sign_restrictions.R")
+source("06_bootstrap.R")
+
+dir.create(config$paths$output_dir, showWarnings = FALSE, recursive = TRUE)
+```
+
+# Overview
+
+This report estimates a reduced-form VAR for the Italian electricity market
+and identifies structural shocks via **sign restrictions**, following Kilian
+& Lütkepohl (2017, Ch. 13): Haar-uniform random rotations of the Cholesky
+factor (via QR decomposition), an admissible-set search over the configured
+sign restrictions, and Fry & Pagan (2011) median-target (MT) selection for
+the reported impulse responses. Confidence bands come from a **frequentist**
+residual bootstrap (Inoue & Kilian, 2013) that re-runs the entire
+identification search inside every replication.
+
+Every modeling choice below (variables, transformations, lags, restrictions,
+bootstrap settings) is read from `00_config.R` -- that is the only file that
+needs editing to change the analysis.
+
+## Endogenous variables
+
+```{r vars-table}
+var_table <- purrr::map_dfr(config$variables, ~ tibble::tibble(
+  id = .x$id, file = .x$file, label = .x$label,
+  transform = .x$transform, role = .x$role
+))
+knitr::kable(var_table, caption = "Variables configured in 00_config.R")
+```
+
+# Data loading
+
+Each raw CSV is parsed with its own delimiter, date format, and decimal
+mark (per-variable settings in `00_config.R`), then aligned onto one common
+monthly grid so any month missing from a source file surfaces as an
+explicit `NA` instead of silently shifting the other series out of
+alignment.
+
+```{r load-data}
+raw_data <- load_all_series(config)
+cat(sprintf("Loaded %d monthly observations, %s to %s.\n",
+            nrow(raw_data), min(raw_data$date), max(raw_data$date)))
+knitr::kable(head(raw_data, 6), digits = 2, caption = "Raw data (first 6 months)")
+```
+
+```{r plot-raw, fig.width=9, fig.height=6}
+par(mfrow = c(2, 2), mar = c(3, 4, 2, 1))
+for (v in config$variables) {
+  plot(raw_data$date, raw_data[[v$id]], type = "l", col = "steelblue",
+       xlab = "", ylab = v$label, main = v$label)
+}
+```
+
+# Transformations
+
+Each variable's `transform` field (`level` / `log` / `diff` / `logdiff`) is
+applied generically -- switching a transformation is a one-line change in
+`00_config.R` and never touches this code.
+
+```{r transform}
+model_data <- transform_data(raw_data, config$variables)
+knitr::kable(head(model_data, 6), digits = 4, caption = "Transformed data (first 6 months)")
+```
+
+# Sanity checks
+
+A compact NA count + ADF screening p-value per variable. This is a quick
+screening signal only -- the formal unit-root testing for the thesis is
+done separately.
+
+```{r sanity-checks}
+sanity_table <- run_sanity_checks(model_data, config$variables)
+knitr::kable(sanity_table, digits = 3, caption = "Sanity checks")
+```
+
+# VAR estimation
+
+Variables are split into endogenous/exogenous automatically from each
+variable's `role` in config. The lag order follows `config$lag_selection`
+(`fixed` or `auto` via `vars::VARselect()`).
+
+```{r var-estimation}
+var_out <- estimate_var(model_data, config)
+cat(sprintf("Lag order p = %d (method: %s). Estimation sample: %d observations.\n",
+            var_out$p, config$lag_selection$method, nrow(var_out$endo) - var_out$p))
+```
+
+```{r var-summary}
+roots <- vars::roots(var_out$fit)
+cat("Largest reduced-form VAR root (stability check):", round(max(roots), 4), "\n")
+```
+
+# Identification
+
+Structural shocks are identified via sign restrictions read generically
+from `config$shocks` -- adding a shock or a restriction requires no changes
+to `05_sign_restrictions.R`. For each of `config$identification$n_draws`
+Haar-uniform random rotations $Q$, the structural impact matrix
+$B_0 = P Q$ is checked against every configured shock's sign restrictions;
+admissible draws are kept, and the **Fry-Pagan median-target** draw (the
+single admissible model closest to the pointwise median IRF) is reported,
+rather than the pointwise median itself.
+
+```{r identification}
+ident <- identify_sign_restrictions(var_out$fit, config)
+
+cat(sprintf(
+  "Acceptance rate: %.2f%% (%d / %d rotations admissible).\n",
+  100 * ident$draws$acceptance_rate, ident$draws$n_accepted, ident$draws$n_draws
+))
+```
+
+The acceptance rate is a diagnostic of how informative the restrictions
+are: a low rate means the restrictions rule out most of the rotation
+space (informative, but a non-refutability check worth keeping in mind);
+a rate near 100% means the restrictions barely bind.
+
+```{r restrictions-table}
+restr_table <- purrr::map_dfr(config$shocks, function(s) {
+  purrr::imap_dfr(s$restrictions, function(r, var_id) {
+    tibble::tibble(shock = s$name, variable = var_id, sign = r$sign,
+                    horizons = paste(range(r$horizons), collapse = ":"))
+  })
+})
+knitr::kable(restr_table, caption = "Configured sign restrictions")
+```
+
+# Bootstrap
+
+Frequentist confidence bands (Inoue & Kilian, 2013): the reduced-form VAR
+residuals are resampled, the sample is rebuilt recursively, the VAR is
+re-estimated, and the **entire identification search above is re-run**
+inside every replication -- not just a coefficient resample.
+
+```{r bootstrap}
+boot_out <- run_bootstrap(var_out$fit, var_out$endo, var_out$p, config)
+
+cat(sprintf(
+  "Bootstrap: %d replications, %d succeeded, %d found no admissible rotation.\n",
+  boot_out$n_boot, boot_out$n_ok, boot_out$n_failed
+))
+cat(sprintf(
+  "Mean acceptance rate across successful replications: %.2f%%.\n",
+  100 * mean(boot_out$boot_acceptance_rates)
+))
+```
+
+```{r boot-accept-hist, fig.width=6, fig.height=4}
+hist(100 * boot_out$boot_acceptance_rates, breaks = 15, col = "steelblue",
+     main = "Bootstrap replications: acceptance rate distribution",
+     xlab = "Acceptance rate (%)")
+```
+
+# Results
+
+Median-target impulse responses with `r sprintf("%.0f%%", 100 * config$bootstrap$conf_level)`
+bootstrap confidence bands.
+
+```{r irf-plot-fn}
+plot_irf_grid <- function(mt_irf, bands, var_names, shock_names, var_labels) {
+  n_shocks <- length(shock_names)
+  n_vars <- length(var_names)
+  h <- seq_len(dim(mt_irf)[3]) - 1
+
+  old_par <- par(mfrow = c(n_vars, n_shocks), mar = c(3, 4, 2, 1))
+  on.exit(par(old_par))
+
+  for (v in seq_len(n_vars)) {
+    for (s in seq_len(n_shocks)) {
+      point <- mt_irf[v, s, ]
+      lo <- bands$lower[v, s, ]
+      hi <- bands$upper[v, s, ]
+
+      plot(h, point, type = "n", ylim = range(c(point, lo, hi), na.rm = TRUE),
+           xlab = "", ylab = var_labels[v],
+           main = if (v == 1) shock_names[s] else "")
+      polygon(c(h, rev(h)), c(lo, rev(hi)),
+              col = grDevices::adjustcolor("steelblue", alpha.f = 0.25), border = NA)
+      lines(h, point, col = "steelblue", lwd = 2)
+      abline(h = 0, lty = 2, col = "grey40")
+    }
+  }
+}
+
+var_labels <- purrr::map_chr(config$variables, "label")
+names(var_labels) <- purrr::map_chr(config$variables, "id")
+```
+
+```{r irf-plot, fig.width=9, fig.height=10}
+plot_irf_grid(ident$mt$mt_irf, boot_out$bands, ident$var_names, ident$shock_names,
+              var_labels[ident$var_names])
+```
+
+## Saved output
+
+```{r save-output}
+saveRDS(list(config = config, var_out = var_out, ident = ident, boot_out = boot_out),
+        file.path(config$paths$output_dir, "svar_results.rds"))
+cat("Saved results to", file.path(config$paths$output_dir, "svar_results.rds"), "\n")
+```
