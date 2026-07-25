@@ -51,12 +51,6 @@ config <- list(
       label = "PUN (EUR/MWh)", transform = "logdiff", role = "endogenous"
     ),
     list(
-      id = "res_capacity", file = "ita_res_capacity.csv",
-      date_col = "Date", date_format = "%m-%Y",
-      value_col = "RES Installed Capacity (MW)", delim = ",", decimal = ".",
-      label = "RES Installed Capacity (MW)", transform = "log", role = "endogenous"
-    ),
-    list(
       id = "gas_price", file = "ttf.csv",
       date_col = "Date", date_format = "%d/%m/%Y",
       value_col = "Price", delim = ";", decimal = ".",
@@ -66,7 +60,13 @@ config <- list(
       id = "energy_consumption", file = "energy_consumption.csv",
       date_col = "Date", date_format = "%m-%Y",
       value_col = "Volumi MWh", delim = ";", decimal = ",",
-      label = "Electricity Consumption (MWh)", transform = "log", role = "endogenous"
+      label = "Electricity Consumption (MWh)", transform = "logdiff", role = "endogenous"
+    ),
+    list(
+      id = "res_capacity", file = "ita_res_capacity.csv",
+      date_col = "Date", date_format = "%m-%Y",
+      value_col = "RES Installed Capacity (MW)", delim = ",", decimal = ".",
+      label = "RES Installed Capacity (MW)", transform = "log", role = "exogenous"
     )
   ),
 
@@ -75,7 +75,7 @@ config <- list(
   lag_selection = list(
     method    = "fixed",
     p_fixed   = 12,
-    criterion = "AIC",
+    criterion = "FPE",
     lag_max   = 13
   ),
 
@@ -98,32 +98,30 @@ config <- list(
     list(
       name = "gas_price_shock",
       restrictions = list(
-        gas_price = list(sign = "+", horizons = 0:2),
-        pun       = list(sign = "+", horizons = 0:2)
+        gas_price = list(sign = "+", horizons = 0)
       )
     ),
     list(
       name = "electricity_demand_shock",
       restrictions = list(
-        energy_consumption = list(sign = "+", horizons = 0),
-        pun                 = list(sign = "+", horizons = 0)
+        energy_consumption = list(sign = "+", horizons = 0)
       )
     )
   ),
 
   ## Sign-restriction search.
   identification = list(
-    n_draws = 50000,
-    horizon = 20,
-    seed    = 123
+    n_draws = 100000,
+    horizon = 24,
+    seed    = 6
   ),
 
   ## Frequentist bootstrap (Inoue & Kilian, 2013). The FULL identification
   ## search (draws_per_boot rotations) is re-run inside every replication.
   bootstrap = list(
-    n_boot         = 100,
+    n_boot         = 250,
     draws_per_boot = 5000,
     conf_level     = 0.90,
-    seed           = 456
+    seed           = 6
   )
 )
