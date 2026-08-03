@@ -84,11 +84,16 @@ to the 1st of the month, and left-joins them all onto one common monthly
 grid (`build_monthly_grid()`) — any month a source is missing becomes an
 explicit `NA` row instead of shifting the others out of alignment.
 
-**3. Sanity checks.** `run_sanity_checks()` in `03_sanity_checks.R` is the
-one function to look at: it returns a table (n, NA count, ADF screening
-p-value, stationary-at-5% flag) and prints one summary line. The ADF
-p-value is an interpolated screening approximation (see
-`approx_adf_pvalue()`), not the formal thesis test.
+**3. Diagnostics.** One compact table per check, in `main.Rmd`'s
+"Diagnostics" section: `run_adf_tests()`/`run_kpss_tests()` in
+`03_sanity_checks.R` (unit roots, level and first difference, every
+variable, statistic against native critical values), `johansen_test()`
+(same file; cointegration rank test on the endogenous variables' level-form
+series), and `residual_diagnostics()`/`stability_table()` in
+`04_var_model.R` (Portmanteau/LM and Jarque-Bera tests on the fitted VAR's
+residuals, and companion-matrix root moduli). No pass/fail flags anywhere
+-- read statistics against the reported critical values / p-values
+directly.
 
 **4. Reversible transformations.** Change `transform` in a variable's
 config block to `"level"`, `"log"`, `"diff"`, or `"logdiff"` and re-run —
@@ -112,9 +117,9 @@ by appending another entry — `05_sign_restrictions.R` loops over
 order) is checked against column *i* of the random rotation `B0`; because
 `Q` is Haar-uniform over the whole orthogonal group, this is not a loss of
 generality — the ensemble of random draws already explores every column
-assignment. The current restriction horizons (gas-price shock: 0:2 on
-`gas_price`/`pun`; demand shock: impact-only on `energy_consumption`/`pun`)
-were chosen empirically: tighter windows (e.g. 0:3 on both shocks)
+assignment. The current restrictions (gas-price shock: impact-only on
+`gas_price`; demand shock: impact-only on `energy_consumption`) were chosen
+empirically: tighter windows (e.g. 0:3 on both shocks)
 turned out to admit **zero** rotations out of 20000 for this dataset — a
 real informativeness finding worth discussing, not a bug. If you tighten
 restrictions and get "No admissible rotations found", that error message is

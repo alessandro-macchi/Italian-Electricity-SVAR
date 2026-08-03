@@ -23,7 +23,7 @@ split_by_role <- function(data, variables_cfg) {
 select_lag <- function(endo, lag_cfg) {
   if (lag_cfg$method == "fixed") return(lag_cfg$p_fixed)
 
-  sel <- vars::VARselect(endo, lag.max = lag_cfg$lag_max, type = "const")
+  sel <- vars::VARselect(endo, lag.max = lag_cfg$lag_max, type = "const", season = 12)
   crit_row <- paste0(lag_cfg$criterion, "(n)")
   as.integer(sel$selection[crit_row])
 }
@@ -38,7 +38,34 @@ estimate_var <- function(data, config) {
   exo <- if (!is.null(split$exogenous)) split$exogenous[complete_idx, , drop = FALSE] else NULL
 
   p <- select_lag(endo, config$lag_selection)
-  fit <- vars::VAR(endo, p = p, type = config$var$type, exogen = exo)
+  fit <- vars::VAR(endo, p = p, type = config$var$type, season = 12, exogen = exo)
 
   list(fit = fit, p = p, endo = endo, exo = exo)
+}
+
+#' Residual autocorrelation (Portmanteau/LM test) and normality
+#' (Jarque-Bera) for the fitted VAR -- one table, native statistic/df/
+#' p-value for each, no pass/fail flag.
+residual_diagnostics <- function(fit, p) {
+  pt <- vars::serial.test(fit, lags.pt = p + 12, type = "PT.asymptotic")$serial
+  jb <- vars::normality.test(fit, multivariate.only = TRUE)$jb.mul$JB
+
+  tibble::tibble(
+    test      = c("Portmanteau (LM)", "Jarque-Bera"),
+    statistic = c(as.numeric(pt$statistic), as.numeric(jb$statistic)),
+    df        = c(as.numeric(pt$parameter), as.numeric(jb$parameter)),
+    p_value   = c(as.numeric(pt$p.value), as.numeric(jb$p.value))
+  )
+}
+
+#' Companion-matrix root moduli (all of them -- stability requires every
+#' one strictly below 1), sorted descending and wrapped into a compact
+#' grid instead of one long column.
+stability_table <- function(fit) {
+  r <- sort(vars::roots(fit), decreasing = TRUE)
+  ncol <- min(6, length(r))
+  pad <- (ncol - length(r) %% ncol) %% ncol
+  m <- matrix(c(r, rep(NA_real_, pad)), ncol = ncol, byrow = TRUE)
+  colnames(m) <- as.character(seq_len(ncol))
+  m
 }

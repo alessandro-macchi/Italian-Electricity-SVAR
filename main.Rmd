@@ -83,17 +83,6 @@ model_data <- transform_data(raw_data, config$variables)
 knitr::kable(head(model_data, 6), digits = 4, caption = "Transformed data (first 6 months)")
 ```
 
-# Sanity checks
-
-A compact NA count + ADF screening p-value per variable. This is a quick
-screening signal only -- the formal unit-root testing for the thesis is
-done separately.
-
-```{r sanity-checks}
-sanity_table <- run_sanity_checks(model_data, config$variables)
-knitr::kable(sanity_table, digits = 3, caption = "Sanity checks")
-```
-
 # VAR estimation
 
 Variables are split into endogenous/exogenous automatically from each
@@ -106,9 +95,37 @@ cat(sprintf("Lag order p = %d (method: %s). Estimation sample: %d observations.\
             var_out$p, config$lag_selection$method, nrow(var_out$endo) - var_out$p))
 ```
 
-```{r var-summary}
-roots <- vars::roots(var_out$fit)
-cat("Largest reduced-form VAR root (stability check):", round(max(roots), 4), "\n")
+# Diagnostics
+
+Per the thesis's model-validation requirements: unit-root tests (ADF,
+KPSS), a Johansen cointegration test, VAR residual diagnostics
+(autocorrelation, normality), and companion-matrix stability. One compact
+table per check -- read the statistics against the reported critical
+values / p-values directly, no automatic interpretation.
+
+```{r adf-test}
+knitr::kable(run_adf_tests(raw_data, config$variables), digits = 3,
+             caption = "ADF test (H0: unit root)")
+```
+
+```{r kpss-test}
+knitr::kable(run_kpss_tests(raw_data, config$variables), digits = 3,
+             caption = "KPSS test (H0: stationary)")
+```
+
+```{r johansen-test}
+knitr::kable(johansen_test(raw_data, config$variables, var_out$p), digits = 3,
+             caption = "Johansen trace test (H0: cointegration rank <= r)")
+```
+
+```{r residual-diagnostics}
+knitr::kable(residual_diagnostics(var_out$fit, var_out$p), digits = 3,
+             caption = "VAR residual diagnostics")
+```
+
+```{r stability-table}
+knitr::kable(stability_table(var_out$fit), digits = 3,
+             caption = "Companion-matrix root moduli (sorted descending)")
 ```
 
 # Identification

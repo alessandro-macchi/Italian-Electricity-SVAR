@@ -11,9 +11,10 @@ apply_transform <- function(x, type) {
     type,
     level   = x,
     log     = log(x),
+    log1p   = log1p(x),
     diff    = c(NA_real_, diff(x)),
     logdiff = c(NA_real_, diff(log(x))),
-    stop("Unknown transform '", type, "' -- expected level/log/diff/logdiff.")
+    stop("Unknown transform '", type, "' -- expected level/log/log1p/diff/logdiff.")
   )
 }
 

@@ -49,11 +49,15 @@ parse_var_date <- function(date_strings, date_format) {
 }
 
 #' Read one variable's raw CSV and return a two-column tibble(date, <id>),
-#' with dates floored to the first of the month.
+#' with dates floored to the first of the month. `var_cfg$header = FALSE`
+#' handles raw files with no header row (readr then names columns X1, X2,
+#' ... which date_col/value_col must match); defaults to TRUE.
 read_one_series <- function(var_cfg, raw_dir) {
   path <- file.path(raw_dir, var_cfg$file)
   loc <- readr::locale(decimal_mark = var_cfg$decimal)
+  col_names <- if (isFALSE(var_cfg$header)) FALSE else TRUE
   raw <- readr::read_delim(path, delim = var_cfg$delim, locale = loc,
+                            col_names = col_names,
                             show_col_types = FALSE, progress = FALSE)
 
   month <- lubridate::floor_date(

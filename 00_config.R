@@ -41,8 +41,11 @@ config <- list(
   ##   delim       column delimiter used in the raw CSV ("," or ";")
   ##   decimal     decimal mark used in the value column ("." or ",")
   ##   label       human-readable label used in tables/plots
-  ##   transform   "level" | "log" | "diff" | "logdiff"
+  ##   transform   "level" | "log" | "log1p" | "diff" | "logdiff"
   ##   role        "endogenous" | "exogenous"
+  ##   header      optional; FALSE if the raw CSV has no header row (column
+  ##               names default to X1, X2, ... and date_col/value_col must
+  ##               match). Omit for the normal case (TRUE).
   variables = list(
     list(
       id = "pun", file = "pun.csv",
@@ -66,16 +69,35 @@ config <- list(
       id = "res_capacity", file = "ita_res_capacity.csv",
       date_col = "Date", date_format = "%m-%Y",
       value_col = "RES Installed Capacity (MW)", delim = ",", decimal = ".",
-      label = "RES Installed Capacity (MW)", transform = "log", role = "exogenous"
+      label = "RES Installed Capacity (MW)", transform = "logdiff", role = "endogenous"
+    ),
+    list(
+      id = "ipi", file = "eu_ipi.csv",
+      date_col = "date", date_format = "%d/%m/%Y",
+      value_col = "ipi", delim = ";", decimal = ".",
+      label = "EU Industrial Production Index", transform = "level", role = "exogenous"
+    ),
+    list(
+      id = "covid_hospitalizations", file = "covid_hospitalizations.csv",
+      date_col = "Date", date_format = "%m-%Y",
+      value_col = "covid_hospitalizations", delim = ",", decimal = ".",
+      label = "COVID-19 New Hospitalizations (IT, monthly)", transform = "level", role = "exogenous"
+    ),
+    list(
+      id = "energy_crisis", file = "energy_crisis_dummy.csv",
+      date_col = "Date", date_format = "%m-%Y",
+      value_col = "energy_crisis_dummy", delim = ",", decimal = ".",
+      label = "Energy Crisis Dummy (2021-2022)", transform = "level", role = "exogenous"
     )
-  ),
+),
 
   ## Lag order. method = "fixed" uses p_fixed. method = "auto" uses
   ## vars::VARselect() and picks `criterion` (one of "AIC","HQ","SC","FPE").
+  ## AIC with lag_max = 13, per the thesis's model-validation requirements.
   lag_selection = list(
     method    = "fixed",
     p_fixed   = 12,
-    criterion = "FPE",
+    criterion = "AIC",
     lag_max   = 13
   ),
 
@@ -111,7 +133,7 @@ config <- list(
 
   ## Sign-restriction search.
   identification = list(
-    n_draws = 100000,
+    n_draws = 10000,
     horizon = 24,
     seed    = 6
   ),
@@ -119,8 +141,8 @@ config <- list(
   ## Frequentist bootstrap (Inoue & Kilian, 2013). The FULL identification
   ## search (draws_per_boot rotations) is re-run inside every replication.
   bootstrap = list(
-    n_boot         = 250,
-    draws_per_boot = 5000,
+    n_boot         = 100,
+    draws_per_boot = 500,
     conf_level     = 0.90,
     seed           = 6
   )
