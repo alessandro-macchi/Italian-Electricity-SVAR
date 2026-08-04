@@ -2,8 +2,9 @@
 ## Pre-estimation diagnostics: ADF and KPSS unit-root tests, one row per
 ## variable with a p-value, reported in two tables (level, and after
 ## `02_transform.R`'s configured transform) -- and a Johansen cointegration
-## test on the endogenous variables' level-form series. This file only
-## computes numbers, it never branches the pipeline on their values -- no
+## test on the endogenous variables' level-form series, controlling for the
+## crisis and seasonal dummies. This file only computes numbers, it never
+## branches the pipeline on their values -- no
 ## pass/fail flags, just statistics against p = 0.05 (or the 5% critical
 ## value, for Johansen).
 ## -----------------------------------------------------------------------
@@ -60,15 +61,27 @@ unit_root_table <- function(raw_data, variables_cfg, space = c("level", "transfo
 }
 
 #' Johansen trace test (H0: cointegration rank <= r) on the endogenous
-#' variables' level-form series, using the VAR's own lag order p.
+#' variables' level-form series, using the VAR's own lag order p. Controls
+#' for the same structural breaks the VAR conditions on (energy_crisis,
+#' covid_crisis) plus monthly seasonals, via ca.jo()'s `dumvar` -- otherwise
+#' those level shifts can register as spurious cointegration.
 johansen_test <- function(raw_data, variables_cfg, p) {
   endo_cfg <- Filter(function(v) v$role == "endogenous", variables_cfg)
 
   levels_mat <- sapply(endo_cfg, function(v) level_form(raw_data[[v$id]], v$transform))
   colnames(levels_mat) <- purrr::map_chr(endo_cfg, "id")
-  levels_mat <- stats::na.omit(levels_mat)
 
-  jo <- urca::ca.jo(levels_mat, type = "trace", ecdet = "const", K = p, spec = "transitory")
+  dumvar <- cbind(
+    as.matrix(raw_data[, c("energy_crisis")]),
+    monthly_dummies(raw_data$date)
+  )
+
+  keep <- stats::complete.cases(levels_mat)
+  levels_mat <- levels_mat[keep, , drop = FALSE]
+  dumvar <- dumvar[keep, , drop = FALSE]
+
+  jo <- urca::ca.jo(levels_mat, type = "trace", ecdet = "const", K = p,
+                     spec = "transitory")
 
   tibble::tibble(
     rank      = trimws(gsub("\\|", "", rownames(jo@cval))),

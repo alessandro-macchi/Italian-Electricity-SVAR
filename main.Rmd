@@ -64,8 +64,8 @@ cat(sprintf("Loaded %d monthly observations, %s to %s.\n",
 knitr::kable(head(raw_data, 6), digits = 2, caption = "Raw data (first 6 months)")
 ```
 
-```{r plot-raw, fig.width=9, fig.height=6}
-par(mfrow = c(2, 2), mar = c(3, 4, 2, 1))
+```{r plot-raw, fig.width=9, fig.height=8}
+par(mfrow = c(ceiling(length(config$variables) / 2), 2), mar = c(3, 4, 2, 1))
 for (v in config$variables) {
   plot(raw_data$date, raw_data[[v$id]], type = "l", col = "steelblue",
        xlab = "", ylab = v$label, main = v$label)
@@ -86,8 +86,10 @@ knitr::kable(head(model_data, 6), digits = 4, caption = "Transformed data (first
 # VAR estimation
 
 Variables are split into endogenous/exogenous automatically from each
-variable's `role` in config. The lag order follows `config$lag_selection`
-(`fixed` or `auto` via `vars::VARselect()`).
+variable's `role` in config. Eleven monthly seasonal dummies (Feb-Dec; Jan
+is the reference month) are always appended to the exogenous block to
+control for calendar seasonality. The lag order follows
+`config$lag_selection` (`fixed` or `auto` via `vars::VARselect()`).
 
 ```{r var-estimation}
 var_out <- estimate_var(model_data, config)

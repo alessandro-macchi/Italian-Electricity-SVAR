@@ -19,6 +19,23 @@ split_by_role <- function(data, variables_cfg) {
   )
 }
 
+#' 11 monthly seasonal dummy columns (Feb..Dec; Jan is the omitted
+#' reference month, avoiding collinearity with the VAR's intercept), one
+#' row per date -- passed through the exogenous block instead of
+#' vars::VAR()'s built-in `season` argument, so they flow through the same
+#' `exo` matrix as every other exogenous variable.
+monthly_dummies <- function(dates) {
+  m <- as.integer(format(dates, "%m"))
+  d <- sapply(2:12, function(mm) as.numeric(m == mm))
+  colnames(d) <- month.abb[2:12]
+  d
+}
+stopifnot({
+  test_dates <- seq(as.Date("2020-01-01"), by = "month", length.out = 12)
+  d <- monthly_dummies(test_dates)
+  ncol(d) == 11 && all(rowSums(d) == c(0, rep(1, 11)))
+})
+
 #' Fixed or automatically selected (vars::VARselect) lag order.
 select_lag <- function(endo, lag_cfg) {
   if (lag_cfg$method == "fixed") return(lag_cfg$p_fixed)
@@ -29,7 +46,8 @@ select_lag <- function(endo, lag_cfg) {
 }
 
 #' Estimate the reduced-form VAR, keeping only rows with no NA among the
-#' endogenous variables (and the matching exogenous rows).
+#' endogenous variables (and the matching exogenous rows). Monthly
+#' seasonal dummies are always appended to the exogenous block.
 estimate_var <- function(data, config) {
   split <- split_by_role(data, config$variables)
 
@@ -37,8 +55,11 @@ estimate_var <- function(data, config) {
   endo <- split$endogenous[complete_idx, , drop = FALSE]
   exo <- if (!is.null(split$exogenous)) split$exogenous[complete_idx, , drop = FALSE] else NULL
 
+  dummies <- monthly_dummies(data$date[complete_idx])
+  exo <- if (is.null(exo)) dummies else cbind(exo, dummies)
+
   p <- select_lag(endo, config$lag_selection)
-  fit <- vars::VAR(endo, p = p, type = config$var$type, season = 12, exogen = exo)
+  fit <- vars::VAR(endo, p = p, type = config$var$type, exogen = exo)
 
   list(fit = fit, p = p, endo = endo, exo = exo)
 }

@@ -103,7 +103,10 @@ config block to `"level"`, `"log"`, `"diff"`, or `"logdiff"` and re-run —
 **5. Endogenous/exogenous split.** Change `role` to `"endogenous"` or
 `"exogenous"` in a variable's config block. `split_by_role()` in
 `04_var_model.R` reads it automatically; `estimate_var()` passes the
-exogenous block to `vars::VAR(..., exogen = ...)` when non-empty.
+exogenous block to `vars::VAR(..., exogen = ...)`. `monthly_dummies()`
+always appends 11 monthly seasonal dummies (Feb-Dec; Jan is the omitted
+reference month) to that block, in place of `vars::VAR()`'s built-in
+`season` argument.
 
 **6. Lag selection.** `config$lag_selection$method` is `"fixed"` (uses
 `p_fixed`) or `"auto"` (uses `vars::VARselect()` with

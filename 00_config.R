@@ -20,11 +20,11 @@ config <- list(
   ## Common monthly grid. NULL bounds default to the min/max date observed
   ## across all raw series (their union), so months missing at the start or
   ## end of any individual series surface as explicit NA rather than being
-  ## silently dropped or misaligned. Fixed here to Feb 2009 - Dec 2025: this
-  ## is now the binding constraint (eu_gas_stock_chg.csv, endogenous, only
-  ## starts 2009-02 -- its first month, 2009-01, has no prior-period value
-  ## to build the ratio from), and estimate_var() drops any row with an NA
-  ## endogenous value anyway -- Jan 2026 onward is dropped deliberately.
+  ## silently dropped or misaligned. Fixed here to Feb 2005 - Dec 2025: the
+  ## start is not actually binding until gas_storage_monthly.csv (endogenous,
+  ## only starts 2011-01), and estimate_var() drops any row with an NA
+  ## endogenous value anyway -- Jan 2026 onward (every series runs past Dec
+  ## 2025) is dropped deliberately.
   sample = list(
     start = "2005-02-01",
     end   = "2025-12-01"
@@ -66,6 +66,30 @@ config <- list(
       date_col = "Date", date_format = "%m-%Y",
       value_col = "Volumi MWh", delim = ";", decimal = ",",
       label = "Electricity Consumption (MWh)", transform = "logdiff", role = "endogenous"
+    ),
+    list(
+      id = "gas_storage", file = "gas_storage_monthly.csv",
+      date_col = "month", date_format = "%Y-%m-%d",
+      value_col = "gas_storage", delim = ",", decimal = ".",
+      label = "EU Gas Storage Level (GWh)", transform = "logdiff", role = "endogenous"
+    ),
+    list(
+      id = "ipi", file = "eu_ipi.csv",
+      date_col = "date", date_format = "%d/%m/%Y",
+      value_col = "ipi", delim = ";", decimal = ".",
+      label = "EU Industrial Production Index", transform = "level", role = "exogenous"
+    ),
+    list(
+      id = "energy_crisis", file = "energy_crisis_dummy.csv",
+      date_col = "Date", date_format = "%m-%Y",
+      value_col = "energy_crisis_dummy", delim = ",", decimal = ".",
+      label = "Energy Crisis Dummy", transform = "level", role = "exogenous"
+    ),
+    list(
+      id = "covid_crisis", file = "covid_crisis_dummy.csv",
+      date_col = "Date", date_format = "%m-%Y",
+      value_col = "covid_crisis_dummy", delim = ",", decimal = ".",
+      label = "COVID Crisis Dummy (Feb 2020 - May 2022)", transform = "level", role = "exogenous"
     )
 ),
 
