@@ -20,9 +20,11 @@ config <- list(
   ## Common monthly grid. NULL bounds default to the min/max date observed
   ## across all raw series (their union), so months missing at the start or
   ## end of any individual series surface as explicit NA rather than being
-  ## silently dropped or misaligned. Fixed here to Feb 2005 - Dec 2025 (the
-  ## thesis's analysis window): ttf.csv only starts Feb 2005, and Jan 2026
-  ## onward is dropped deliberately.
+  ## silently dropped or misaligned. Fixed here to Feb 2009 - Dec 2025: this
+  ## is now the binding constraint (eu_gas_stock_chg.csv, endogenous, only
+  ## starts 2009-02 -- its first month, 2009-01, has no prior-period value
+  ## to build the ratio from), and estimate_var() drops any row with an NA
+  ## endogenous value anyway -- Jan 2026 onward is dropped deliberately.
   sample = list(
     start = "2005-02-01",
     end   = "2025-12-01"
@@ -64,30 +66,6 @@ config <- list(
       date_col = "Date", date_format = "%m-%Y",
       value_col = "Volumi MWh", delim = ";", decimal = ",",
       label = "Electricity Consumption (MWh)", transform = "logdiff", role = "endogenous"
-    ),
-    list(
-      id = "res_capacity", file = "ita_res_capacity.csv",
-      date_col = "Date", date_format = "%m-%Y",
-      value_col = "RES Installed Capacity (MW)", delim = ",", decimal = ".",
-      label = "RES Installed Capacity (MW)", transform = "logdiff", role = "endogenous"
-    ),
-    list(
-      id = "ipi", file = "eu_ipi.csv",
-      date_col = "date", date_format = "%d/%m/%Y",
-      value_col = "ipi", delim = ";", decimal = ".",
-      label = "EU Industrial Production Index", transform = "level", role = "exogenous"
-    ),
-    list(
-      id = "covid_hospitalizations", file = "covid_hospitalizations.csv",
-      date_col = "Date", date_format = "%m-%Y",
-      value_col = "covid_hospitalizations", delim = ",", decimal = ".",
-      label = "COVID-19 New Hospitalizations (IT, monthly)", transform = "level", role = "exogenous"
-    ),
-    list(
-      id = "energy_crisis", file = "energy_crisis_dummy.csv",
-      date_col = "Date", date_format = "%m-%Y",
-      value_col = "energy_crisis_dummy", delim = ",", decimal = ".",
-      label = "Energy Crisis Dummy (2021-2022)", transform = "level", role = "exogenous"
     )
 ),
 
@@ -141,7 +119,7 @@ config <- list(
   ## Frequentist bootstrap (Inoue & Kilian, 2013). The FULL identification
   ## search (draws_per_boot rotations) is re-run inside every replication.
   bootstrap = list(
-    n_boot         = 100,
+    n_boot         = 250,
     draws_per_boot = 500,
     conf_level     = 0.90,
     seed           = 6

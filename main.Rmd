@@ -103,19 +103,19 @@ KPSS), a Johansen cointegration test, VAR residual diagnostics
 table per check -- read the statistics against the reported critical
 values / p-values directly, no automatic interpretation.
 
-```{r adf-test}
-knitr::kable(run_adf_tests(raw_data, config$variables), digits = 3,
-             caption = "ADF test (H0: unit root)")
+```{r unit-root-level}
+knitr::kable(unit_root_table(raw_data, config$variables, space = "level"), digits = 3,
+             caption = "Unit-root tests, level (ADF H0: unit root; KPSS H0: stationary; p < 0.05 rejects H0)")
 ```
 
-```{r kpss-test}
-knitr::kable(run_kpss_tests(raw_data, config$variables), digits = 3,
-             caption = "KPSS test (H0: stationary)")
+```{r unit-root-transform}
+knitr::kable(unit_root_table(raw_data, config$variables, space = "transform"), digits = 3,
+             caption = "Unit-root tests, after transform (ADF H0: unit root; KPSS H0: stationary; p < 0.05 rejects H0)")
 ```
 
 ```{r johansen-test}
 knitr::kable(johansen_test(raw_data, config$variables, var_out$p), digits = 3,
-             caption = "Johansen trace test (H0: cointegration rank <= r)")
+             caption = "Johansen trace test (H0: cointegration rank <= r), 5% critical value")
 ```
 
 ```{r residual-diagnostics}

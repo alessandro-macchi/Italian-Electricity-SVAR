@@ -13,7 +13,8 @@ frequentist bootstrap inference (Inoue & Kilian, 2013).
                           format/decimal mark, aligns everything onto one
                           common monthly grid (missing months -> explicit NA).
 02_transform.R            Reversible level/log/diff/logdiff transforms.
-03_sanity_checks.R        NA counts + ADF screening p-value per variable.
+03_sanity_checks.R        Unit-root (ADF/KPSS) and Johansen cointegration
+                          tests.
 04_var_model.R             Reduced-form VAR: endogenous/exogenous split and
                           lag selection, both driven by config.
 05_sign_restrictions.R    Identification: Haar-uniform rotations (QR),
@@ -85,15 +86,15 @@ grid (`build_monthly_grid()`) — any month a source is missing becomes an
 explicit `NA` row instead of shifting the others out of alignment.
 
 **3. Diagnostics.** One compact table per check, in `main.Rmd`'s
-"Diagnostics" section: `run_adf_tests()`/`run_kpss_tests()` in
-`03_sanity_checks.R` (unit roots, level and first difference, every
-variable, statistic against native critical values), `johansen_test()`
-(same file; cointegration rank test on the endogenous variables' level-form
-series), and `residual_diagnostics()`/`stability_table()` in
-`04_var_model.R` (Portmanteau/LM and Jarque-Bera tests on the fitted VAR's
-residuals, and companion-matrix root moduli). No pass/fail flags anywhere
--- read statistics against the reported critical values / p-values
-directly.
+"Diagnostics" section: `unit_root_table()` in `03_sanity_checks.R` (ADF +
+KPSS, one row per variable with a p-value, in two tables -- level and
+after `02_transform.R`'s configured transform), `johansen_test()` (same
+file; cointegration rank test on the endogenous variables' level-form
+series, against its 5% critical value), and
+`residual_diagnostics()`/`stability_table()` in `04_var_model.R`
+(Portmanteau/LM and Jarque-Bera tests on the fitted VAR's residuals, and
+companion-matrix root moduli). No pass/fail flags anywhere -- read
+statistics against p = 0.05 (or the 5% critical value) directly.
 
 **4. Reversible transformations.** Change `transform` in a variable's
 config block to `"level"`, `"log"`, `"diff"`, or `"logdiff"` and re-run —

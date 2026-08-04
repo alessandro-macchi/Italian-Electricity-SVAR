@@ -23,7 +23,7 @@ split_by_role <- function(data, variables_cfg) {
 select_lag <- function(endo, lag_cfg) {
   if (lag_cfg$method == "fixed") return(lag_cfg$p_fixed)
 
-  sel <- vars::VARselect(endo, lag.max = lag_cfg$lag_max, type = "const", season = 12)
+  sel <- vars::VARselect(endo, lag.max = lag_cfg$lag_max, type = "const")
   crit_row <- paste0(lag_cfg$criterion, "(n)")
   as.integer(sel$selection[crit_row])
 }

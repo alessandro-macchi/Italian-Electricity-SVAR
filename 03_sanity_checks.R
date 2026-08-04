@@ -1,70 +1,61 @@
 ## 03_sanity_checks.R -----------------------------------------------------------
-## Pre-estimation diagnostics, one compact table per test: ADF and KPSS
-## unit-root tests (level and first difference, every variable) and a
-## Johansen cointegration test on the endogenous variables' level-form
-## series. This file only computes numbers, it never branches the pipeline
-## on their values -- no pass/fail flags, just statistics against their own
-## native critical values.
+## Pre-estimation diagnostics: ADF and KPSS unit-root tests, one row per
+## variable with a p-value, reported in two tables (level, and after
+## `02_transform.R`'s configured transform) -- and a Johansen cointegration
+## test on the endogenous variables' level-form series. This file only
+## computes numbers, it never branches the pipeline on their values -- no
+## pass/fail flags, just statistics against p = 0.05 (or the 5% critical
+## value, for Johansen).
 ## -----------------------------------------------------------------------
 
 #' A variable's "level" series for unit-root/cointegration testing: logged
 #' when its configured transform is log-based, raw otherwise -- i.e. the
-#' same space `02_transform.R` would difference, so the test verifies that
-#' choice.
+#' pre-differencing space, so the "level" table checks it before
+#' `02_transform.R`'s transform is applied.
 level_form <- function(x, transform) {
   if (transform %in% c("log", "logdiff")) return(log(x))
   if (transform == "log1p") return(log1p(x))
   x
 }
 
-#' ADF test (H0: unit root) on one series, one row: statistic against its
-#' own 10%/5%/1% critical values (urca::ur.df, drift case).
-adf_row <- function(x, variable, spec) {
+#' ADF test (H0: unit root): statistic and p-value (urca::punitroot,
+#' drift case) for one series.
+adf_stats <- function(x) {
   x <- stats::na.omit(x)
   fit <- tryCatch(urca::ur.df(x, type = "drift", selectlags = "AIC"), error = function(e) NULL)
-  if (is.null(fit)) {
-    return(tibble::tibble(variable = variable, spec = spec, statistic = NA_real_,
-                           cv_10pct = NA_real_, cv_5pct = NA_real_, cv_1pct = NA_real_))
-  }
-  cv <- fit@cval[1, ]
-  tibble::tibble(
-    variable  = variable, spec = spec,
-    statistic = fit@teststat[1],
-    cv_10pct  = unname(cv["10pct"]), cv_5pct = unname(cv["5pct"]), cv_1pct = unname(cv["1pct"])
-  )
+  if (is.null(fit)) return(c(adf_stat = NA_real_, adf_p = NA_real_))
+  stat <- unname(fit@teststat[1])
+  c(adf_stat = stat, adf_p = urca::punitroot(stat, N = length(x), trend = "c", statistic = "t"))
 }
 
-#' KPSS test (H0: stationary) on one series, one row: statistic against its
-#' own 10%/5%/2.5%/1% critical values (urca::ur.kpss, level case).
-kpss_row <- function(x, variable, spec) {
+#' KPSS test (H0: stationary): statistic and p-value for one series,
+#' interpolated (stats::approx) from urca::ur.kpss's own critical values --
+#' the same table lookup tseries::kpss.test uses internally.
+kpss_stats <- function(x) {
   x <- stats::na.omit(x)
   fit <- tryCatch(urca::ur.kpss(x, type = "mu", lags = "short"), error = function(e) NULL)
-  if (is.null(fit)) {
-    return(tibble::tibble(variable = variable, spec = spec, statistic = NA_real_,
-                           cv_10pct = NA_real_, cv_5pct = NA_real_, cv_2.5pct = NA_real_, cv_1pct = NA_real_))
-  }
-  cv <- fit@cval[1, ]
-  tibble::tibble(
-    variable  = variable, spec = spec,
-    statistic = fit@teststat[1],
-    cv_10pct  = unname(cv["10pct"]), cv_5pct = unname(cv["5pct"]),
-    cv_2.5pct = unname(cv["2.5pct"]), cv_1pct = unname(cv["1pct"])
-  )
+  if (is.null(fit)) return(c(kpss_stat = NA_real_, kpss_p = NA_real_))
+  stat <- unname(fit@teststat[1])
+  p <- stats::approx(fit@cval[1, ], c(0.10, 0.05, 0.025, 0.01), xout = stat, rule = 2)$y
+  c(kpss_stat = stat, kpss_p = p)
 }
 
-#' ADF, level and first difference, for every configured variable.
-run_adf_tests <- function(raw_data, variables_cfg) {
+#' Unit-root tests, one row per variable: ADF + KPSS statistic and p-value
+#' side by side. `space = "level"` tests `level_form()`; `space =
+#' "transform"` tests the series as `02_transform.R::apply_transform()`
+#' actually feeds it to the model.
+unit_root_table <- function(raw_data, variables_cfg, space = c("level", "transform")) {
+  space <- match.arg(space)
   purrr::map_dfr(variables_cfg, function(v) {
-    lvl <- level_form(raw_data[[v$id]], v$transform)
-    dplyr::bind_rows(adf_row(lvl, v$id, "level"), adf_row(diff(lvl), v$id, "1st diff"))
-  })
-}
-
-#' KPSS, level and first difference, for every configured variable.
-run_kpss_tests <- function(raw_data, variables_cfg) {
-  purrr::map_dfr(variables_cfg, function(v) {
-    lvl <- level_form(raw_data[[v$id]], v$transform)
-    dplyr::bind_rows(kpss_row(lvl, v$id, "level"), kpss_row(diff(lvl), v$id, "1st diff"))
+    series <- if (space == "level") level_form(raw_data[[v$id]], v$transform)
+              else apply_transform(raw_data[[v$id]], v$transform)
+    adf <- adf_stats(series)
+    kpss <- kpss_stats(series)
+    tibble::tibble(
+      variable  = v$id,
+      adf_stat  = adf[["adf_stat"]],   adf_p  = adf[["adf_p"]],
+      kpss_stat = kpss[["kpss_stat"]], kpss_p = kpss[["kpss_p"]]
+    )
   })
 }
 
@@ -82,8 +73,6 @@ johansen_test <- function(raw_data, variables_cfg, p) {
   tibble::tibble(
     rank      = trimws(gsub("\\|", "", rownames(jo@cval))),
     statistic = as.numeric(jo@teststat),
-    cv_10pct  = jo@cval[, "10pct"],
-    cv_5pct   = jo@cval[, "5pct"],
-    cv_1pct   = jo@cval[, "1pct"]
+    cv_5pct   = jo@cval[, "5pct"]
   )
 }
