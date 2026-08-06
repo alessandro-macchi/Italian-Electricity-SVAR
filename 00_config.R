@@ -74,22 +74,22 @@ config <- list(
       label = "EU Gas Storage Level (GWh)", transform = "logdiff", role = "endogenous"
     ),
     list(
+      id = "res_capacity", file = "ita_res_capacity.csv",
+      date_col = "Date", date_format = "%m-%Y",
+      value_col = "RES Installed Capacity (MW)", delim = ",", decimal = ".",
+      label = "RES Installed Capacity (MW)", transform = "level", role = "exogenous"
+    ),
+    list(
       id = "ipi", file = "eu_ipi.csv",
       date_col = "date", date_format = "%d/%m/%Y",
       value_col = "ipi", delim = ";", decimal = ".",
-      label = "EU Industrial Production Index", transform = "level", role = "exogenous"
+      label = "EU Industrial Production Index", transform = "diff", role = "endogenous"
     ),
     list(
       id = "energy_crisis", file = "energy_crisis_dummy.csv",
       date_col = "Date", date_format = "%m-%Y",
       value_col = "energy_crisis_dummy", delim = ",", decimal = ".",
       label = "Energy Crisis Dummy", transform = "level", role = "exogenous"
-    ),
-    list(
-      id = "covid_crisis", file = "covid_crisis_dummy.csv",
-      date_col = "Date", date_format = "%m-%Y",
-      value_col = "covid_crisis_dummy", delim = ",", decimal = ".",
-      label = "COVID Crisis Dummy (Feb 2020 - May 2022)", transform = "level", role = "exogenous"
     )
 ),
 
@@ -120,15 +120,24 @@ config <- list(
   ## admissible in 20000 draws) -- a real diagnostic finding, not a bug.
   shocks = list(
     list(
-      name = "gas_price_shock",
+      name = "gas_demand_shock",
       restrictions = list(
-        gas_price = list(sign = "+", horizons = 0)
+        gas_price = list(sign = "+", horizons = 0),
+        gas_storage = list(sign = "+", horizons = 0)
+      )
+    ),
+    list(
+      name = "gas_supply_shock",
+      restrictions = list(
+        gas_price = list(sign = "+", horizons = 0),
+        gas_storage = list(sign = "-", horizons = 0)
       )
     ),
     list(
       name = "electricity_demand_shock",
       restrictions = list(
-        energy_consumption = list(sign = "+", horizons = 0)
+        energy_consumption = list(sign = "+", horizons = 0),
+        gas_price = list(sign = "+", horizons = 0)
       )
     )
   ),
@@ -136,16 +145,16 @@ config <- list(
   ## Sign-restriction search.
   identification = list(
     n_draws = 10000,
-    horizon = 24,
+    horizon = 36,
     seed    = 6
   ),
 
   ## Frequentist bootstrap (Inoue & Kilian, 2013). The FULL identification
   ## search (draws_per_boot rotations) is re-run inside every replication.
   bootstrap = list(
-    n_boot         = 250,
-    draws_per_boot = 500,
-    conf_level     = 0.90,
+    n_boot         = 1000,
+    draws_per_boot = 1000,
+    conf_level     = 0.68,
     seed           = 6
   )
 )
