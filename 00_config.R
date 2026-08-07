@@ -68,12 +68,6 @@ config <- list(
       label = "Electricity Consumption (MWh)", transform = "logdiff", role = "endogenous"
     ),
     list(
-      id = "gas_storage", file = "gas_storage_monthly.csv",
-      date_col = "month", date_format = "%Y-%m-%d",
-      value_col = "gas_storage", delim = ",", decimal = ".",
-      label = "EU Gas Storage Level (GWh)", transform = "logdiff", role = "endogenous"
-    ),
-    list(
       id = "ipi", file = "eu_ipi.csv",
       date_col = "date", date_format = "%d/%m/%Y",
       value_col = "ipi", delim = ";", decimal = ".",
@@ -84,6 +78,12 @@ config <- list(
       date_col = "Date", date_format = "%m-%Y",
       value_col = "energy_crisis_dummy", delim = ",", decimal = ".",
       label = "Energy Crisis Dummy", transform = "level", role = "exogenous"
+    ),
+    list(
+      id = "res_capacity", file = "ita_res_capacity.csv",
+      date_col = "Date", date_format = "%m-%Y",
+      value_col = "RES Installed Capacity (MW)", delim = ",", decimal = ".",
+      label = "RES Installed Capacity (MW)", transform = "level", role = "exogenous"
     )
 ),
 
@@ -117,14 +117,14 @@ config <- list(
       name = "gas_demand_shock",
       restrictions = list(
         gas_price = list(sign = "+", horizons = 0),
-        gas_storage = list(sign = "+", horizons = 0)
+        ipi = list(sign = "+", horizons = 0)
       )
     ),
     list(
       name = "gas_supply_shock",
       restrictions = list(
         gas_price = list(sign = "+", horizons = 0),
-        gas_storage = list(sign = "-", horizons = 0)
+        ipi = list(sign = "-", horizons = 0)
       )
     ),
     list(
@@ -133,9 +133,8 @@ config <- list(
         energy_consumption = list(sign = "+", horizons = 0),
         gas_price = list(sign = "+", horizons = 0)
       )
-    )
-  ),
-
+  )
+),
   ## Sign-restriction search.
   identification = list(
     n_draws = 10000,

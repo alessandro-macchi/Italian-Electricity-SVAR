@@ -31,7 +31,7 @@ monthly_dummies <- function(dates) {
   d
 }
 stopifnot({
-  test_dates <- seq(as.Date("2020-01-01"), by = "month", length.out = 12)
+  test_dates <- seq(as.Date("2025-01-01"), by = "month", length.out = 12)
   d <- monthly_dummies(test_dates)
   ncol(d) == 11 && all(rowSums(d) == c(0, rep(1, 11)))
 })
