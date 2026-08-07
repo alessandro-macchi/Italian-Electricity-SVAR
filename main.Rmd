@@ -64,11 +64,56 @@ cat(sprintf("Loaded %d monthly observations, %s to %s.\n",
 knitr::kable(head(raw_data, 6), digits = 2, caption = "Raw data (first 6 months)")
 ```
 
-```{r plot-raw, fig.width=9, fig.height=8}
-par(mfrow = c(ceiling(length(config$variables) / 2), 2), mar = c(3, 4, 2, 1))
-for (v in config$variables) {
+```{r plot-fns}
+#' Draw one plot into `plots_dir/<variable id>/<name>.png` instead of the
+#' report -- the report shows the combined grids, the per-variable files are
+#' for use outside it.
+save_plot <- function(id, name, draw) {
+  dir <- file.path(config$paths$plots_dir, id)
+  dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  grDevices::png(file.path(dir, paste0(name, ".png")),
+                 width = 7, height = 4.5, units = "in", res = 150)
+  on.exit(grDevices::dev.off())
+  draw()
+}
+
+plot_series <- function(v) {
   plot(raw_data$date, raw_data[[v$id]], type = "l", col = "steelblue",
        xlab = "", ylab = v$label, main = v$label)
+}
+
+## NA-dropping matches the unit-root tests in 03_sanity_checks.R: the common
+## monthly grid pads series that start late with explicit NAs.
+plot_acf  <- function(v) stats::acf(stats::na.omit(raw_data[[v$id]]), lag.max = 36,
+                                    main = paste("ACF:", v$label))
+plot_pacf <- function(v) stats::pacf(stats::na.omit(raw_data[[v$id]]), lag.max = 36,
+                                     main = paste("PACF:", v$label))
+```
+
+```{r plot-raw, fig.width=9, fig.height=8}
+par(mfrow = c(ceiling(length(config$variables) / 2), 2), mar = c(3, 4, 2, 1))
+for (v in config$variables) plot_series(v)
+
+for (v in config$variables) save_plot(v$id, "timeseries", function() plot_series(v))
+```
+
+## Autocorrelation
+
+Sample ACF and PACF of each raw series, over 36 monthly lags. The slow decay
+in the level series is what the transformations in `00_config.R` address;
+spikes at lags 12, 24 and 36 (clearest in electricity consumption) are the
+calendar seasonality the monthly dummies absorb.
+
+```{r plot-acf, fig.width=9, fig.height=14}
+par(mfrow = c(length(config$variables), 2), mar = c(3, 4, 2, 1))
+for (v in config$variables) {
+  plot_acf(v)
+  plot_pacf(v)
+}
+
+for (v in config$variables) {
+  save_plot(v$id, "acf", function() plot_acf(v))
+  save_plot(v$id, "pacf", function() plot_pacf(v))
 }
 ```
 

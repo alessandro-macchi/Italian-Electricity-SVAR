@@ -14,7 +14,10 @@ config <- list(
 
   paths = list(
     raw_dir    = "data/raw",
-    output_dir = "output"
+    output_dir = "output",
+    ## Per-variable exploratory plots (time series, ACF, PACF) are written to
+    ## plots_dir/<variable id>/ as PNGs; they are not shown in the report.
+    plots_dir  = "plots"
   ),
 
   ## Common monthly grid. NULL bounds default to the min/max date observed
