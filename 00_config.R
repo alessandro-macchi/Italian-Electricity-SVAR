@@ -74,12 +74,6 @@ config <- list(
       label = "EU Gas Storage Level (GWh)", transform = "logdiff", role = "endogenous"
     ),
     list(
-      id = "res_capacity", file = "ita_res_capacity.csv",
-      date_col = "Date", date_format = "%m-%Y",
-      value_col = "RES Installed Capacity (MW)", delim = ",", decimal = ".",
-      label = "RES Installed Capacity (MW)", transform = "level", role = "exogenous"
-    ),
-    list(
       id = "ipi", file = "eu_ipi.csv",
       date_col = "date", date_format = "%d/%m/%Y",
       value_col = "ipi", delim = ";", decimal = ".",
