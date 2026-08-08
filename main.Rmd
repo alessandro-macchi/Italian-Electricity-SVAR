@@ -65,6 +65,21 @@ knitr::kable(head(raw_data, 6), digits = 2, caption = "Raw data (first 6 months)
 ```
 
 ```{r plot-fns}
+## One look for every figure in this report: colours from grDevices'
+## Okabe-Ito colourblind-safe palette, no plot box, horizontal tick labels,
+## plain left-aligned titles, and a light horizontal grid behind the data.
+## `theme_par(...)` takes the per-figure par settings (mfrow, mar) too, so
+## each plotting chunk sets its layout and the style in one call.
+pal <- grDevices::palette.colors(NULL, "Okabe-Ito")
+
+theme_par <- function(...) {
+  par(bty = "n", las = 1, tcl = -0.25, mgp = c(2.4, 0.5, 0), adj = 0,
+      font.main = 1, cex.main = 1.05, col.main = "grey15",
+      col.axis = "grey35", col.lab = "grey30", fg = "grey65", ...)
+}
+
+grid_h <- function() grid(nx = NA, ny = NULL, col = "grey92", lty = 1, lwd = 0.7)
+
 #' Draw one plot into `plots_dir/<variable id>/<name>.png` instead of the
 #' report -- the report shows the combined grids, the per-variable files are
 #' for use outside it.
@@ -74,24 +89,29 @@ save_plot <- function(id, name, draw) {
   grDevices::png(file.path(dir, paste0(name, ".png")),
                  width = 7, height = 4.5, units = "in", res = 150)
   on.exit(grDevices::dev.off())
+  theme_par(mar = c(3.5, 4, 3, 1))
   draw()
 }
 
 plot_series <- function(v) {
-  plot(raw_data$date, raw_data[[v$id]], type = "l", col = "steelblue",
-       xlab = "", ylab = v$label, main = v$label)
+  plot(raw_data$date, raw_data[[v$id]], type = "l", col = pal[["blue"]], lwd = 1.5,
+       xlab = "", ylab = "", main = v$label, panel.first = grid_h())
 }
 
 ## NA-dropping matches the unit-root tests in 03_sanity_checks.R: the common
 ## monthly grid pads series that start late with explicit NAs.
 plot_acf  <- function(v) stats::acf(stats::na.omit(raw_data[[v$id]]), lag.max = 36,
-                                    main = paste("ACF:", v$label))
+                                    main = paste("ACF:", v$label),
+                                    col = pal[["blue"]], lwd = 1.5,
+                                    ci.col = pal[["vermillion"]], panel.first = grid_h())
 plot_pacf <- function(v) stats::pacf(stats::na.omit(raw_data[[v$id]]), lag.max = 36,
-                                     main = paste("PACF:", v$label))
+                                     main = paste("PACF:", v$label),
+                                     col = pal[["blue"]], lwd = 1.5,
+                                     ci.col = pal[["vermillion"]], panel.first = grid_h())
 ```
 
 ```{r plot-raw, fig.width=9, fig.height=8}
-par(mfrow = c(ceiling(length(config$variables) / 2), 2), mar = c(3, 4, 2, 1))
+theme_par(mfrow = c(ceiling(length(config$variables) / 2), 2), mar = c(3, 4, 3, 1))
 for (v in config$variables) plot_series(v)
 
 for (v in config$variables) save_plot(v$id, "timeseries", function() plot_series(v))
@@ -105,7 +125,10 @@ spikes at lags 12, 24 and 36 (clearest in electricity consumption) are the
 calendar seasonality the monthly dummies absorb.
 
 ```{r plot-acf, fig.width=9, fig.height=14}
-par(mfrow = c(length(config$variables), 2), mar = c(3, 4, 2, 1))
+## Wider top/bottom margins than the raw-series grid: with 12 panels the
+## default c(3, 4, 2, 1) leaves too little room and each panel title lands on
+## the "Lag" axis of the panel above it.
+theme_par(mfrow = c(length(config$variables), 2), mar = c(4, 4, 3, 1))
 for (v in config$variables) {
   plot_acf(v)
   plot_pacf(v)
@@ -230,10 +253,15 @@ cat(sprintf(
 ))
 ```
 
-```{r boot-accept-hist, fig.width=6, fig.height=4}
-hist(100 * boot_out$boot_acceptance_rates, breaks = 15, col = "steelblue",
-     main = "Bootstrap replications: acceptance rate distribution",
-     xlab = "Acceptance rate (%)")
+```{r boot-accept-hist, fig.width=7, fig.height=4.5}
+theme_par(mar = c(4, 4, 3, 1))
+h <- hist(100 * boot_out$boot_acceptance_rates, breaks = 15, plot = FALSE)
+## Drawn twice so the grid sits behind the bars: plot.histogram() has no
+## panel.first.
+plot(h, col = NA, border = NA, main = "Bootstrap replications: acceptance rate distribution",
+     xlab = "Acceptance rate (%)", ylab = "Replications")
+grid_h()
+plot(h, col = pal[["skyblue"]], border = "white", add = TRUE)
 ```
 
 # Results
@@ -247,7 +275,7 @@ plot_irf_grid <- function(mt_irf, bands, var_names, shock_names, var_labels) {
   n_vars <- length(var_names)
   h <- seq_len(dim(mt_irf)[3]) - 1
 
-  old_par <- par(mfrow = c(n_vars, n_shocks), mar = c(3, 4, 2, 1))
+  old_par <- theme_par(mfrow = c(n_vars, n_shocks), mar = c(3, 4, 3, 1))
   on.exit(par(old_par))
 
   for (v in seq_len(n_vars)) {
@@ -257,12 +285,13 @@ plot_irf_grid <- function(mt_irf, bands, var_names, shock_names, var_labels) {
       hi <- bands$upper[v, s, ]
 
       plot(h, point, type = "n", ylim = range(c(point, lo, hi), na.rm = TRUE),
-           xlab = "", ylab = var_labels[v],
-           main = if (v == 1) shock_names[s] else "")
+           xlab = if (v == n_vars) "Horizon (months)" else "", ylab = var_labels[v],
+           main = if (v == 1) gsub("_", " ", shock_names[s]) else "",
+           panel.first = grid_h())
       polygon(c(h, rev(h)), c(lo, rev(hi)),
-              col = grDevices::adjustcolor("steelblue", alpha.f = 0.25), border = NA)
-      lines(h, point, col = "steelblue", lwd = 2)
-      abline(h = 0, lty = 2, col = "grey40")
+              col = grDevices::adjustcolor(pal[["blue"]], alpha.f = 0.18), border = NA)
+      abline(h = 0, lty = 2, col = "grey55")
+      lines(h, point, col = pal[["blue"]], lwd = 2)
     }
   }
 }

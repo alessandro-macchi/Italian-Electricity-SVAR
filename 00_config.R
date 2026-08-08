@@ -134,7 +134,7 @@ config <- list(
       name = "electricity_demand_shock",
       restrictions = list(
         energy_consumption = list(sign = "+", horizons = 0),
-        gas_price = list(sign = "+", horizons = 0)
+        pun = list(sign = "+", horizons = 0)
       )
   )
 ),
