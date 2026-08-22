@@ -56,25 +56,25 @@ config <- list(
       id = "pun", file = "pun.csv",
       date_col = "Date", date_format = "%m-%Y",
       value_col = "PUN (€/MWh)", delim = ";", decimal = ",",
-      label = "PUN (EUR/MWh)", transform = "logdiff", role = "endogenous"
+      label = "PUN (EUR/MWh)", transform = "log", role = "endogenous"
     ),
     list(
       id = "gas_price", file = "ttf.csv",
       date_col = "Date", date_format = "%d/%m/%Y",
       value_col = "Price", delim = ";", decimal = ".",
-      label = "TTF Gas Price, Settlement (EUR/MWh)", transform = "logdiff", role = "endogenous"
+      label = "TTF Gas Price, Settlement (EUR/MWh)", transform = "log", role = "endogenous"
     ),
     list(
       id = "energy_consumption", file = "energy_consumption.csv",
       date_col = "Date", date_format = "%m-%Y",
       value_col = "Volumi MWh", delim = ";", decimal = ",",
-      label = "Electricity Consumption (MWh)", transform = "logdiff", role = "endogenous"
+      label = "Electricity Consumption (MWh)", transform = "log", role = "endogenous"
     ),
     list(
       id = "ipi", file = "eu_ipi.csv",
       date_col = "date", date_format = "%d/%m/%Y",
       value_col = "ipi", delim = ";", decimal = ".",
-      label = "EU Industrial Production Index", transform = "diff", role = "endogenous"
+      label = "EU Industrial Production Index", transform = "log", role = "endogenous"
     ),
     list(
       id = "energy_crisis", file = "energy_crisis_dummy.csv",
