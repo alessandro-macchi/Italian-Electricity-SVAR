@@ -51,7 +51,9 @@ parse_var_date <- function(date_strings, date_format) {
 #' Read one variable's raw CSV and return a two-column tibble(date, <id>),
 #' with dates floored to the first of the month. `var_cfg$header = FALSE`
 #' handles raw files with no header row (readr then names columns X1, X2,
-#' ... which date_col/value_col must match); defaults to TRUE.
+#' ... which date_col/value_col must match); defaults to TRUE. `var_cfg$offset`,
+#' when set, is added to the value column at load time, before any transform --
+#' see the `ipi` entry in 00_config.R.
 read_one_series <- function(var_cfg, raw_dir) {
   path <- file.path(raw_dir, var_cfg$file)
   loc <- readr::locale(decimal_mark = var_cfg$decimal)
@@ -64,6 +66,7 @@ read_one_series <- function(var_cfg, raw_dir) {
     parse_var_date(raw[[var_cfg$date_col]], var_cfg$date_format), "month"
   )
   value <- suppressWarnings(as.numeric(raw[[var_cfg$value_col]]))
+  if (!is.null(var_cfg$offset)) value <- value + var_cfg$offset
 
   series <- tibble::tibble(date = month, value = value)
   series <- dplyr::filter(series, !is.na(date))

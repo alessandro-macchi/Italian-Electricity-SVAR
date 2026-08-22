@@ -48,6 +48,14 @@ config <- list(
   ##   label       human-readable label used in tables/plots
   ##   transform   "level" | "log" | "log1p" | "diff" | "logdiff"
   ##   role        "endogenous" | "exogenous"
+  ##   offset      optional; constant added to the raw value column at load
+  ##               time, before any transform. Use it when a source file stores
+  ##               a series shifted off its natural scale (see `ipi`).
+  ##   det         endogenous only; deterministic terms partialled out before
+  ##               the unit-root tests in 03_sanity_checks.R -- any of "const",
+  ##               "trend", "season" (centred monthly dummies), "covid"
+  ##               (covid_crisis_dummy.csv)
+  ##   za          endogenous only; TRUE to also run a Zivot-Andrews test
   ##   header      optional; FALSE if the raw CSV has no header row (column
   ##               names default to X1, X2, ... and date_col/value_col must
   ##               match). Omit for the normal case (TRUE).
@@ -56,25 +64,29 @@ config <- list(
       id = "pun", file = "pun.csv",
       date_col = "Date", date_format = "%m-%Y",
       value_col = "PUN (€/MWh)", delim = ";", decimal = ",",
-      label = "PUN (EUR/MWh)", transform = "log", role = "endogenous"
+      label = "PUN (EUR/MWh)", transform = "log", role = "endogenous",
+      det = "const", za = TRUE
     ),
     list(
       id = "gas_price", file = "ttf.csv",
       date_col = "Date", date_format = "%d/%m/%Y",
       value_col = "Price", delim = ";", decimal = ".",
-      label = "TTF Gas Price, Settlement (EUR/MWh)", transform = "log", role = "endogenous"
+      label = "TTF Gas Price, Settlement (EUR/MWh)", transform = "log", role = "endogenous",
+      det = "const", za = TRUE
     ),
     list(
       id = "energy_consumption", file = "energy_consumption.csv",
       date_col = "Date", date_format = "%m-%Y",
       value_col = "Volumi MWh", delim = ";", decimal = ",",
-      label = "Electricity Consumption (MWh)", transform = "log", role = "endogenous"
+      label = "Electricity Consumption (MWh)", transform = "log", role = "endogenous",
+      det = c("const", "trend", "season"), za = FALSE
     ),
     list(
       id = "ipi", file = "eu_ipi.csv",
       date_col = "date", date_format = "%d/%m/%Y",
-      value_col = "ipi", delim = ";", decimal = ".",
-      label = "EU Industrial Production Index", transform = "log", role = "endogenous"
+      value_col = "ipi", delim = ";", decimal = ".", offset = 100,
+      label = "EU Industrial Production Index", transform = "log", role = "endogenous",
+      det = c("const", "trend", "covid"), za = FALSE
     ),
     list(
       id = "energy_crisis", file = "energy_crisis_dummy.csv",

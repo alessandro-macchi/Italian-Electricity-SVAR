@@ -183,6 +183,18 @@ knitr::kable(unit_root_table(raw_data, config$variables, space = "transform"), d
              caption = "Unit-root tests, after transform (ADF H0: unit root; KPSS H0: stationary; p < 0.05 rejects H0)")
 ```
 
+## Deterministic components and unit roots
+
+```{r stationarity-table}
+stationarity <- stationarity_table(raw_data, config)
+knitr::kable(stationarity, digits = 3, caption = stationarity_note(stationarity))
+```
+
+```{r za-table}
+knitr::kable(za_table(raw_data, config), digits = 3,
+             caption = "Zivot-Andrews, endogenous level shift (H0: unit root with no break)")
+```
+
 ```{r johansen-test}
 knitr::kable(johansen_test(raw_data, config$variables, var_out$p), digits = 3,
              caption = "Johansen trace test (H0: cointegration rank <= r), 5% critical value")
