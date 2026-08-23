@@ -11,7 +11,7 @@
 
 <meta name="author" content="Alessandro Macchi" />
 
-<meta name="date" content="2026-08-22" />
+<meta name="date" content="2026-08-23" />
 
 <title>SVAR Analysis of the Italian Electricity Market</title>
 
@@ -355,7 +355,7 @@ Market</h1>
 <h3 class="subtitle">Identification by Sign Restrictions (Kilian &amp;
 Lütkepohl, 2017, Ch. 13)</h3>
 <h4 class="author">Alessandro Macchi</h4>
-<h4 class="date">2026-08-22</h4>
+<h4 class="date">2026-08-23</h4>
 
 </div>
 
@@ -864,48 +864,45 @@ stationary; p &lt; 0.05 rejects H0)</caption>
 components and unit roots</h2>
 <pre class="r"><code>stationarity &lt;- stationarity_table(raw_data, config)
 knitr::kable(stationarity, digits = 3, caption = stationarity_note(stationarity))</code></pre>
-<table style="width:100%;">
-<caption>Unit-root tests on deterministic-adjusted series. Terms removed
-before testing, by row: pun = const; gas_price = const;
-energy_consumption = const + trend + season; ipi = const + trend +
-covid. Here const is the regression intercept, trend a linear trend,
-season 11 centred monthly dummies (Feb-Dec, each minus 1/12), covid the
-covid_crisis_dummy series (2020-02 to 2022-05). ADF H0: unit root –
-levels use type = trend where a trend was removed and type = drift
-otherwise, 5% critical value in adf_level_cv5; first differences use
-type = drift, 5% critical value -2.87. Both search up to 12 augmentation
-lags by AIC. KPSS H0: stationary, type = mu, 5% critical value 0.463
-(10%: 0.347). Zivot-Andrews H0: unit root with no break, model =
-intercept, 5% critical value -4.80; za_break is the first month of the
-estimated shift.</caption>
+<table>
+<caption>Unit-root tests on deterministic-adjusted series. Every cell is
+the test statistic with its p-value in parentheses, and the two tests
+point in opposite directions: ADF H0 is a unit root, so p &lt; 0.05
+favours stationarity, while KPSS H0 is stationarity, so p &lt; 0.05
+favours a unit root. An I(1) series therefore shows adf_level not
+significant and kpss_level significant, with the _diff columns (the same
+two tests on the first difference) reversing both. Terms removed before
+testing, by row: pun = const; gas_price = const; energy_consumption =
+const + season; ipi = const – const is the regression intercept, trend a
+linear trend, season 11 centred monthly dummies (Feb-Dec, each minus
+1/12). ADF uses type = trend where a trend was removed and type = drift
+otherwise, searching up to 12 augmentation lags by AIC; its p comes from
+MacKinnon’s response surface. KPSS uses type = mu at the short and long
+Newey-West bandwidths; its p is interpolated from tabulated critical
+values and so is bounded to [0.01, 0.10]. Zivot-Andrews is in the next
+table.</caption>
 <colgroup>
-<col width="11%" />
-<col width="2%" />
 <col width="14%" />
-<col width="6%" />
-<col width="8%" />
-<col width="10%" />
-<col width="9%" />
-<col width="5%" />
-<col width="9%" />
-<col width="9%" />
-<col width="4%" />
-<col width="6%" />
+<col width="2%" />
+<col width="11%" />
+<col width="11%" />
+<col width="12%" />
+<col width="11%" />
+<col width="12%" />
+<col width="11%" />
+<col width="11%" />
 </colgroup>
 <thead>
 <tr class="header">
 <th align="left">variable</th>
 <th align="right">n</th>
 <th align="left">deterministics</th>
-<th align="right">adf_level</th>
-<th align="right">adf_level_cv5</th>
-<th align="right">kpss_level_short</th>
-<th align="right">kpss_level_long</th>
-<th align="right">adf_diff</th>
-<th align="right">kpss_diff_short</th>
-<th align="right">kpss_diff_long</th>
-<th align="right">za_stat</th>
-<th align="left">za_break</th>
+<th align="left">adf_level</th>
+<th align="left">kpss_level_short</th>
+<th align="left">kpss_level_long</th>
+<th align="left">adf_diff</th>
+<th align="left">kpss_diff_short</th>
+<th align="left">kpss_diff_long</th>
 </tr>
 </thead>
 <tbody>
@@ -913,57 +910,45 @@ estimated shift.</caption>
 <td align="left">pun</td>
 <td align="right">251</td>
 <td align="left">const</td>
-<td align="right">-2.076</td>
-<td align="right">-2.87</td>
-<td align="right">0.901</td>
-<td align="right">0.400</td>
-<td align="right">-11.620</td>
-<td align="right">0.047</td>
-<td align="right">0.044</td>
-<td align="right">-5.887</td>
-<td align="left">2021-06-01</td>
+<td align="left">-2.076 (0.255)</td>
+<td align="left">0.901 (&lt;0.01)</td>
+<td align="left">0.400 (0.077)</td>
+<td align="left">-11.620 (&lt;0.001)</td>
+<td align="left">0.047 (&gt;0.10)</td>
+<td align="left">0.044 (&gt;0.10)</td>
 </tr>
 <tr class="even">
 <td align="left">gas_price</td>
 <td align="right">251</td>
 <td align="left">const</td>
-<td align="right">-2.480</td>
-<td align="right">-2.87</td>
-<td align="right">0.781</td>
-<td align="right">0.373</td>
-<td align="right">-12.312</td>
-<td align="right">0.031</td>
-<td align="right">0.032</td>
-<td align="right">-5.575</td>
-<td align="left">2021-04-01</td>
+<td align="left">-2.480 (0.122)</td>
+<td align="left">0.781 (&lt;0.01)</td>
+<td align="left">0.373 (0.089)</td>
+<td align="left">-12.312 (&lt;0.001)</td>
+<td align="left">0.031 (&gt;0.10)</td>
+<td align="left">0.032 (&gt;0.10)</td>
 </tr>
 <tr class="odd">
 <td align="left">energy_consumption</td>
 <td align="right">251</td>
-<td align="left">const + trend + season</td>
-<td align="right">-2.901</td>
-<td align="right">-3.42</td>
-<td align="right">0.341</td>
-<td align="right">0.177</td>
-<td align="right">-6.165</td>
-<td align="right">0.025</td>
-<td align="right">0.041</td>
-<td align="right">NA</td>
-<td align="left">NA</td>
+<td align="left">const + season</td>
+<td align="left">-1.423 (0.571)</td>
+<td align="left">3.139 (&lt;0.01)</td>
+<td align="left">1.302 (&lt;0.01)</td>
+<td align="left">-6.164 (&lt;0.001)</td>
+<td align="left">0.026 (&gt;0.10)</td>
+<td align="left">0.042 (&gt;0.10)</td>
 </tr>
 <tr class="even">
 <td align="left">ipi</td>
 <td align="right">251</td>
-<td align="left">const + trend + covid</td>
-<td align="right">-3.141</td>
-<td align="right">-3.42</td>
-<td align="right">0.210</td>
-<td align="right">0.110</td>
-<td align="right">-13.389</td>
-<td align="right">0.026</td>
-<td align="right">0.034</td>
-<td align="right">NA</td>
-<td align="left">NA</td>
+<td align="left">const</td>
+<td align="left">-3.187 (0.022)</td>
+<td align="left">0.488 (0.044)</td>
+<td align="left">0.253 (&gt;0.10)</td>
+<td align="left">-12.836 (&lt;0.001)</td>
+<td align="left">0.025 (&gt;0.10)</td>
+<td align="left">0.033 (&gt;0.10)</td>
 </tr>
 </tbody>
 </table>

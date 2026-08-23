@@ -53,8 +53,7 @@ config <- list(
   ##               a series shifted off its natural scale (see `ipi`).
   ##   det         endogenous only; deterministic terms partialled out before
   ##               the unit-root tests in 03_sanity_checks.R -- any of "const",
-  ##               "trend", "season" (centred monthly dummies), "covid"
-  ##               (covid_crisis_dummy.csv)
+  ##               "trend", "season" (centred monthly dummies)
   ##   za          endogenous only; TRUE to also run a Zivot-Andrews test
   ##   header      optional; FALSE if the raw CSV has no header row (column
   ##               names default to X1, X2, ... and date_col/value_col must
@@ -79,14 +78,14 @@ config <- list(
       date_col = "Date", date_format = "%m-%Y",
       value_col = "Volumi MWh", delim = ";", decimal = ",",
       label = "Electricity Consumption (MWh)", transform = "log", role = "endogenous",
-      det = c("const", "trend", "season"), za = FALSE
+      det = c("const", "season"), za = FALSE
     ),
     list(
       id = "ipi", file = "eu_ipi.csv",
       date_col = "date", date_format = "%d/%m/%Y",
       value_col = "ipi", delim = ";", decimal = ".", offset = 100,
       label = "EU Industrial Production Index", transform = "log", role = "endogenous",
-      det = c("const", "trend", "covid"), za = FALSE
+      det = "const", za = FALSE
     ),
     list(
       id = "energy_crisis", file = "energy_crisis_dummy.csv",
