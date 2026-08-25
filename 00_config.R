@@ -128,24 +128,19 @@ config <- list(
   ## admissible in 20000 draws) -- a real diagnostic finding, not a bug.
   shocks = list(
     list(
-      name = "gas_demand_shock",
+      name = "aggregate_demand_shock",
       restrictions = list(
         gas_price = list(sign = "+", horizons = 0),
-        ipi = list(sign = "+", horizons = 0)
+        ipi = list(sign = "+", horizons = 0),
+        energy_consumption = list(sign = "+", horizons = 0)
       )
     ),
     list(
-      name = "gas_supply_shock",
+      name = "gas_specific_shock",
       restrictions = list(
         gas_price = list(sign = "+", horizons = 0),
-        ipi = list(sign = "-", horizons = 0)
-      )
-    ),
-    list(
-      name = "electricity_demand_shock",
-      restrictions = list(
-        energy_consumption = list(sign = "+", horizons = 0),
-        pun = list(sign = "+", horizons = 0)
+        ipi = list(sign = "-", horizons = 0),
+        energy_consumption = list(sign = "-", horizons = 0)
       )
   )
 ),
@@ -154,6 +149,14 @@ config <- list(
     n_draws = 10000,
     horizon = 36,
     seed    = 6
+  ),
+
+  ## Forecast error variance decomposition. `horizons` are the h reported
+  ## in the FEVD table, in months after impact (h = 0 is the impact period).
+  ## They are also the only horizons for which per-draw shares are kept in
+  ## the bootstrap, so lengthening this list costs pooled memory.
+  fevd = list(
+    horizons = c(1, 6, 12, 24, 36)
   ),
 
   ## Frequentist bootstrap (Inoue & Kilian, 2013). The FULL identification
