@@ -58,7 +58,9 @@ simulate_var <- function(A, const, init, resid_mat) {
 #' replication's ENTIRE admissible set as a [draw, var, shock, horizon]
 #' array -- collapsing it to a single central model here (e.g. the
 #' median-target draw) would discard identification uncertainty and leave
-#' the bands too narrow. Returns NULL if no admissible rotation is found.
+#' the bands too narrow. The FEVD is computed here too, from this
+#' replication's own IRF array and reduced form, so one bootstrap run yields
+#' both IRF and FEVD bands. Returns NULL if no admissible rotation is found.
 run_one_bootstrap_replication <- function(fit, endo, p, config) {
   coefs <- extract_var_coefs(fit, p)
   resid_mat <- stats::residuals(fit)
@@ -74,7 +76,19 @@ run_one_bootstrap_replication <- function(fit, endo, p, config) {
   )
   if (is.null(ident)) return(NULL)
 
-  list(irf = ident$irf_array, acceptance_rate = ident$draws$acceptance_rate)
+  ## ponytail: only config$fevd$horizons are kept per draw. Keeping all 37
+  ## would add ~1.5x the pooled IRF array's memory for horizons nothing
+  ## reports -- the plotted curve is the median-target point estimate, which
+  ## keeps every horizon. Widen the subset here if bands are ever needed
+  ## across the whole horizon.
+  fevd <- fevd_shares(
+    ident$irf_array,
+    fevd_denominator(reduced_form_irf(boot_fit, config$identification$horizon),
+                     summary(boot_fit)$covres)
+  )[, , , config$fevd$horizons + 1L, drop = FALSE]
+
+  list(irf = ident$irf_array, fevd = fevd,
+       acceptance_rate = ident$draws$acceptance_rate)
 }
 
 #' Pool the per-replication [draw, var, shock, horizon] arrays into one
@@ -129,12 +143,19 @@ run_bootstrap <- function(fit, endo, p, config) {
   draw_array <- stack_replications(purrr::map(ok, "irf"))
   bands <- bootstrap_bands(draw_array, config$bootstrap$conf_level)
 
+  ## Same shape ([draw, var, shock, horizon]), so pooling and the pointwise
+  ## percentiles reuse the IRF machinery unchanged.
+  fevd_array <- stack_replications(purrr::map(ok, "fevd"))
+  fevd_bands <- bootstrap_bands(fevd_array, config$bootstrap$conf_level)
+
   list(
     n_boot = config$bootstrap$n_boot,
     n_ok = length(ok),
     n_failed = config$bootstrap$n_boot - length(ok),
     n_pooled_draws = dim(draw_array)[1],
     bands = bands,
+    fevd_bands = fevd_bands,
+    fevd_horizons = config$fevd$horizons,
     boot_acceptance_rates = purrr::map_dbl(ok, "acceptance_rate")
   )
 }

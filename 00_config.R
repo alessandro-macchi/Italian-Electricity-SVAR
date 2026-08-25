@@ -126,10 +126,19 @@ config <- list(
   ## horizon windows (e.g. 0:3 on both shocks) turned out to be
   ## infeasible for this particular reduced-form VAR (0 rotations
   ## admissible in 20000 draws) -- a real diagnostic finding, not a bug.
+  ##
+  ## `pun > 0` on impact holds for BOTH shocks by the merit order: gas-fired
+  ## plants set the marginal price in the large majority of Italian hours, so
+  ## any shock that raises TTF raises PUN. It is the only institutional
+  ## restriction in the set, and it binds hard -- roughly half the rotations
+  ## admissible without it have PUN falling on impact while gas rises. It
+  ## restricts the SIGN of the response, not its magnitude, so it does not
+  ## prejudge the variance decomposition it sharpens (see the FEVD section).
   shocks = list(
     list(
       name = "aggregate_demand_shock",
       restrictions = list(
+        pun = list(sign = "+", horizons = 0),
         gas_price = list(sign = "+", horizons = 0),
         ipi = list(sign = "+", horizons = 0),
         energy_consumption = list(sign = "+", horizons = 0)
@@ -138,6 +147,7 @@ config <- list(
     list(
       name = "gas_specific_shock",
       restrictions = list(
+        pun = list(sign = "+", horizons = 0),
         gas_price = list(sign = "+", horizons = 0),
         ipi = list(sign = "-", horizons = 0),
         energy_consumption = list(sign = "-", horizons = 0)
@@ -162,7 +172,7 @@ config <- list(
   ## Frequentist bootstrap (Inoue & Kilian, 2013). The FULL identification
   ## search (draws_per_boot rotations) is re-run inside every replication.
   bootstrap = list(
-    n_boot         = 1000,
+    n_boot         = 2000,
     draws_per_boot = 1000,
     conf_level     = 0.68,
     seed           = 6

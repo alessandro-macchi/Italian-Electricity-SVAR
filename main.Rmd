@@ -20,6 +20,7 @@ source("03_sanity_checks.R")
 source("04_var_model.R")
 source("05_sign_restrictions.R")
 source("06_bootstrap.R")
+source("07_fevd.R")
 
 dir.create(config$paths$output_dir, showWarnings = FALSE, recursive = TRUE)
 ```
@@ -279,7 +280,9 @@ plot(h, col = pal[["skyblue"]], border = "white", add = TRUE)
 # Results
 
 Median-target impulse responses with `r sprintf("%.0f%%", 100 * config$bootstrap$conf_level)`
-bootstrap confidence bands.
+bootstrap confidence bands. Every endogenous variable enters the VAR in logs, so
+the responses are percent deviations from baseline to a one-standard-deviation
+structural shock (log points x 100; exactly, 100(e^theta - 1)).
 
 ```{r irf-plot-fn}
 plot_irf_grid <- function(mt_irf, bands, var_names, shock_names, var_labels) {
@@ -292,12 +295,15 @@ plot_irf_grid <- function(mt_irf, bands, var_names, shock_names, var_labels) {
 
   for (v in seq_len(n_vars)) {
     for (s in seq_len(n_shocks)) {
-      point <- mt_irf[v, s, ]
-      lo <- bands$lower[v, s, ]
-      hi <- bands$upper[v, s, ]
+      ## All endogenous variables enter the VAR in logs, so the responses are
+      ## log points; x100 reads them as percent deviations from baseline.
+      point <- 100 * mt_irf[v, s, ]
+      lo <- 100 * bands$lower[v, s, ]
+      hi <- 100 * bands$upper[v, s, ]
 
       plot(h, point, type = "n", ylim = range(c(point, lo, hi), na.rm = TRUE),
-           xlab = if (v == n_vars) "Horizon (months)" else "", ylab = var_labels[v],
+           xlab = if (v == n_vars) "Horizon (months)" else "",
+           ylab = paste0(var_labels[v], " (%)"),
            main = if (v == 1) gsub("_", " ", shock_names[s]) else "",
            panel.first = grid_h())
       polygon(c(h, rev(h)), c(lo, rev(hi)),
@@ -308,7 +314,11 @@ plot_irf_grid <- function(mt_irf, bands, var_names, shock_names, var_labels) {
   }
 }
 
-var_labels <- purrr::map_chr(config$variables, "label")
+## config labels carry the RAW series' units ("PUN (EUR/MWh)"), which are wrong
+## on an IRF axis: the responses are percent deviations, not levels. Strip the
+## trailing unit parenthesis -- plot_irf_grid() appends "(%)" instead. Only the
+## IRF grid uses these; the raw-series and ACF panels read v$label directly.
+var_labels <- sub("\\s*\\(.*\\)$", "", purrr::map_chr(config$variables, "label"))
 names(var_labels) <- purrr::map_chr(config$variables, "id")
 ```
 
@@ -317,10 +327,80 @@ plot_irf_grid(ident$mt$mt_irf, boot_out$bands, ident$var_names, ident$shock_name
               var_labels[ident$var_names])
 ```
 
+## Variance decomposition
+
+Share of each variable's h-step forecast error variance attributable to the
+identified shocks, for the same Fry-Pagan median-target model as the impulse
+responses above. Horizons are months after impact, so h = 0 is the impact
+period. Identification is **partial** -- only the shocks in `config$shocks`
+are pinned down -- so the denominator is the full reduced-form forecast error
+variance implied by $\Sigma_u$, not the sum over the identified columns of
+$B_0$. The identified shares consequently sum to less than one, and the
+`unidentified` column is the remainder left to the shocks the sign
+restrictions do not identify. It is reported as-is: rescaling the shares to
+sum to one would claim an identification this design does not deliver.
+
+Brackets are `r sprintf("%.0f%%", 100 * config$bootstrap$conf_level)` pointwise
+percentile bands over the same pooled bootstrap draws as the IRF bands -- the
+FEVD is computed inside each replication, so no second bootstrap pass is run.
+
+```{r fevd-table}
+fevd_mt <- fevd_median_target(var_out$fit, ident, config$identification$horizon)
+fevd_names <- c(gsub("_", " ", ident$shock_names), "unidentified")
+
+fevd_tbl <- purrr::imap_dfr(config$fevd$horizons, function(h, k) {
+  tbl <- tibble::tibble(horizon = h, variable = unname(var_labels[ident$var_names]))
+  for (b in seq_along(fevd_names)) {
+    tbl[[fevd_names[b]]] <- sprintf("%.2f [%.2f, %.2f]", fevd_mt[, b, h + 1],
+                                     boot_out$fevd_bands$lower[, b, k],
+                                     boot_out$fevd_bands$upper[, b, k])
+  }
+  tbl
+})
+knitr::kable(fevd_tbl, caption = paste0(
+  "Forecast error variance decomposition, median-target model, with ",
+  sprintf("%.0f%%", 100 * config$bootstrap$conf_level), " bootstrap bands"))
+```
+
+```{r fevd-plot, fig.width=9, fig.height=7}
+#' Stacked-area FEVD, one panel per variable: the identified shocks' shares
+#' stacked from the bottom and the unidentified remainder filling the gap up
+#' to one, so how much of each variable the restrictions actually explain is
+#' the visible grey band rather than something the reader has to subtract.
+plot_fevd_grid <- function(fevd, band_names, var_labels) {
+  h <- seq_len(dim(fevd)[3]) - 1
+  n_vars <- dim(fevd)[1]
+  cols <- c(unname(pal[c("blue", "orange", "bluishgreen", "reddishpurple")])[
+    seq_len(length(band_names) - 1)], "grey85")
+
+  old_par <- theme_par(mfrow = c(ceiling(n_vars / 2), 2), mar = c(3.5, 4, 3, 1))
+  on.exit(par(old_par))
+
+  for (v in seq_len(n_vars)) {
+    cum <- rbind(0, apply(fevd[v, , ], 2, cumsum))
+    plot(h, cum[nrow(cum), ], type = "n", ylim = c(0, 1),
+         xlab = if (v > n_vars - 2) "Horizon (months)" else "",
+         ylab = "Share of forecast error variance",
+         main = var_labels[v], panel.first = grid_h())
+    for (b in seq_along(band_names)) {
+      polygon(c(h, rev(h)), c(cum[b, ], rev(cum[b + 1, ])), col = cols[b], border = NA)
+    }
+    if (v == 1) {
+      legend("bottomright", legend = band_names, fill = cols, border = NA,
+             bty = "o", box.col = NA, cex = 0.85,
+             bg = grDevices::adjustcolor("white", alpha.f = 0.85))
+    }
+  }
+}
+
+plot_fevd_grid(fevd_mt, fevd_names, var_labels[ident$var_names])
+```
+
 ## Saved output
 
 ```{r save-output}
-saveRDS(list(config = config, var_out = var_out, ident = ident, boot_out = boot_out),
+saveRDS(list(config = config, var_out = var_out, ident = ident, boot_out = boot_out,
+             fevd_mt = fevd_mt),
         file.path(config$paths$output_dir, "svar_results.rds"))
 cat("Saved results to", file.path(config$paths$output_dir, "svar_results.rds"), "\n")
 ```
