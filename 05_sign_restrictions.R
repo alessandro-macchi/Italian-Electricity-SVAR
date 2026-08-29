@@ -39,14 +39,29 @@ structural_irf <- function(phi, b0) {
 
 #' Check one shock's restrictions (variable -> sign over horizons) against
 #' one column of the structural IRF array.
+#'
+#' A restriction is keyed EITHER by a variable id -- a sign on that single
+#' response -- OR by a free name carrying `weights`, a named vector of
+#' variable ids to weights defining a linear contrast of responses. The
+#' relative-price restrictions use the latter: c(pun = 1, gas_price = -1) is
+#' the electricity-price response net of the response of its marginal fuel
+#' cost, which is what separates a gas shock from an electricity-specific
+#' supply shock (see the `shocks` comment in 00_config.R).
 shock_restrictions_hold <- function(irf_struct, col, restrictions, var_index) {
-  for (var_id in names(restrictions)) {
-    row <- var_index[[var_id]]
-    sign_wanted <- restrictions[[var_id]]$sign
-    horizons <- restrictions[[var_id]]$horizons
+  for (key in names(restrictions)) {
+    r <- restrictions[[key]]
+    w <- if (is.null(r$weights)) stats::setNames(1, key) else r$weights
+    rows <- var_index[names(w)]
 
-    values <- irf_struct[row, col, horizons + 1]
-    ok <- if (sign_wanted == "+") all(values >= 0) else all(values <= 0)
+    ## [length(rows), 1, length(horizons)]. The column dimension is a
+    ## singleton, so R recycles `w` down the first dimension exactly once per
+    ## horizon; summing over that dimension leaves the contrast at each
+    ## horizon. The single-variable case is w = 1 and reduces to the plain
+    ## response, so both kinds of restriction go through one code path.
+    block <- irf_struct[rows, col, r$horizons + 1, drop = FALSE] * w
+    values <- apply(block, 3, sum)
+
+    ok <- if (r$sign == "+") all(values >= 0) else all(values <= 0)
     if (!ok) return(FALSE)
   }
   TRUE
@@ -65,6 +80,32 @@ all_shocks_hold <- function(irf_struct, shocks_cfg, var_index) {
     }
   }
   TRUE
+}
+
+#' Warn if two labelled shocks' restriction sets overlap on the admissible
+#' draws. Pairwise disjointness is what keeps the shock labels stable from
+#' draw to draw: where two sets intersect, the same economic disturbance lands
+#' in different columns in different draws and the pooled IRF distribution
+#' silently mixes them (Fry & Pagan, 2011, sec. 4). The config's restrictions
+#' are built to be disjoint; this catches an edit that breaks that without
+#' anyone noticing. Checked on the draws actually used rather than
+#' analytically, which is exact for the reported set.
+warn_if_labels_overlap <- function(draws, shocks_cfg, var_index) {
+  n <- length(shocks_cfg)
+  for (i in seq_len(n)) for (j in setdiff(seq_len(n), i)) {
+    bad <- sum(vapply(draws$irf, shock_restrictions_hold, logical(1),
+                      col = i, restrictions = shocks_cfg[[j]]$restrictions,
+                      var_index = var_index))
+    if (bad > 0) {
+      warning(sprintf(
+        paste("%d of %d admissible draws have column %d ('%s') also satisfying",
+              "'%s' -- the restriction sets overlap, so the shock labels are",
+              "not stable across draws."),
+        bad, draws$n_accepted, i, shocks_cfg[[i]]$name, shocks_cfg[[j]]$name),
+        call. = FALSE)
+    }
+  }
+  invisible(NULL)
 }
 
 #' Draw candidate rotations and keep the admissible ones (those satisfying
@@ -153,6 +194,15 @@ identify_sign_restrictions <- function(fit, config,
   if (draws$n_accepted == 0) {
     stop("No admissible rotations found -- restrictions may be too tight, ",
          "or n_draws too low.")
+  }
+
+  ## Only on the reported run: the bootstrap calls this with seed = NULL a
+  ## couple of thousand times, and the restriction sets it checks are the
+  ## same ones every replication.
+  if (!is.null(seed)) {
+    warn_if_labels_overlap(draws, config$shocks,
+                            stats::setNames(seq_along(draws$var_names),
+                                            draws$var_names))
   }
 
   n_shocks <- length(config$shocks)

@@ -61,7 +61,10 @@ estimate_var <- function(data, config) {
   p <- select_lag(endo, config$lag_selection)
   fit <- vars::VAR(endo, p = p, type = config$var$type, exogen = exo)
 
-  list(fit = fit, p = p, endo = endo, exo = exo)
+  ## `dates` matches `endo` row for row -- the endogenous matrix itself
+  ## carries no dates, and the historical decomposition needs them for its
+  ## time axis.
+  list(fit = fit, p = p, endo = endo, exo = exo, dates = data$date[complete_idx])
 }
 
 #' Residual autocorrelation (Portmanteau/LM test) and normality
