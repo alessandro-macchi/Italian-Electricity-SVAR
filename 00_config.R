@@ -178,7 +178,7 @@ config <- list(
       )
     ),
     list(
-      name = "Gas_Specific_Shock",
+      name = "Gas-Specific_Shock",
       restrictions = list(
         pun = list(sign = "+", horizons = 0),
         gas_price = list(sign = "+", horizons = 0),
@@ -187,7 +187,7 @@ config <- list(
       )
     ),
     list(
-      name = "Non_Industrial_Demand_Shock",
+      name = "Non-Industrial_Demand_Shock",
       restrictions = list(
         pun = list(sign = "+", horizons = 0),
         gas_price = list(sign = "+", horizons = 0),
@@ -224,7 +224,7 @@ config <- list(
   ## run is roughly 40 minutes.
   bootstrap = list(
     n_boot         = 2000,
-    draws_per_boot = 1000,
+    draws_per_boot = 4000,
     conf_level     = 0.68,
     seed           = 6
   )
