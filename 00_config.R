@@ -117,8 +117,10 @@ config <- list(
   ),
 
   ## Structural shocks for sign-restriction identification. One entry per
-  ## shock; `restrictions` maps a variable id (must match `variables[[i]]$id`)
-  ## to a sign ("+"/"-") and the impulse-response horizons (0 = impact) over
+  ## shock; `restrictions` maps EITHER a variable id (must match
+  ## `variables[[i]]$id`) OR a free name carrying `weights` -- a named vector
+  ## of variable ids to weights, i.e. a linear contrast of responses -- to a
+  ## sign ("+"/"-") and the impulse-response horizons (0 = impact) over
   ## which that sign must hold. The identification code loops over this list
   ## generically -- adding a shock or a restriction requires no code changes.
   ## Restriction horizons were picked by checking the admissible-set
@@ -127,16 +129,47 @@ config <- list(
   ## infeasible for this particular reduced-form VAR (0 rotations
   ## admissible in 20000 draws) -- a real diagnostic finding, not a bug.
   ##
-  ## `pun > 0` on impact holds for BOTH shocks by the merit order: gas-fired
-  ## plants set the marginal price in the large majority of Italian hours, so
-  ## any shock that raises TTF raises PUN. It is the only institutional
-  ## restriction in the set, and it binds hard -- roughly half the rotations
-  ## admissible without it have PUN falling on impact while gas rises. It
-  ## restricts the SIGN of the response, not its magnitude, so it does not
-  ## prejudge the variance decomposition it sharpens (see the FEVD section).
+  ## `pun > 0` on impact holds for ALL THREE shocks by the merit order:
+  ## gas-fired plants set the marginal price in the large majority of Italian
+  ## hours, so any shock that raises TTF raises PUN, and a contraction of
+  ## domestic supply raises it directly. It binds hard -- roughly half the
+  ## rotations admissible without it have PUN falling on impact while gas
+  ## rises, which no account of the Italian merit order permits. It restricts
+  ## the SIGN of the response, not its magnitude, so it does not prejudge the
+  ## variance decomposition it sharpens (see the FEVD section).
+  ##
+  ## The three restriction sets are PAIRWISE DISJOINT by construction, so no
+  ## admissible rotation can satisfy two of them in the same column and the
+  ## shock labels cannot switch across draws (the labelling problem of
+  ## Fry & Pagan, 2011, sec. 4). Two margins do the separating:
+  ##   - `energy_consumption` splits the demand shock (quantity up) from the
+  ##     two contractionary shocks (quantity down). Price and quantity moving
+  ##     together is a demand shift, in opposite directions a supply shift.
+  ##   - `pun_minus_gas`, the log electricity-price response net of the log
+  ##     gas-price response, splits the two contractionary shocks. Under a
+  ##     gas shock PUN rises BECAUSE gas rises, and pass-through is less than
+  ##     one-for-one (PUN also carries CO2, non-fuel variable costs, and the
+  ##     hours where gas is not marginal), so the contrast is <= 0. An
+  ##     electricity-specific supply shock -- outages, hydro shortfall, low
+  ##     RES output, import constraints -- originates DOWNSTREAM of gas, and
+  ##     Italy is a price taker on TTF, so PUN rises with gas roughly flat and
+  ##     the contrast is >= 0. This is a relative-price restriction on log
+  ##     responses, not a spark spread in EUR/MWh: it compares elasticities,
+  ##     and it deliberately does not restrict the level of either price.
+  ##
+  ## `ipi` is deliberately left FREE under the electricity supply shock. The
+  ## macro cost of energy shocks is what the IRFs and the FEVD are meant to
+  ## MEASURE, and restricting it would assume the finding; the scales do not
+  ## match either, since `pun` is Italian and `ipi` is EU-wide. It is kept
+  ## under the gas shock, where the disturbance and the aggregate are both
+  ## European.
+  ##
+  ## Sign normalisation: a POSITIVE realisation of `gas_specific_shock` or
+  ## `electricity_supply_shock` is an ADVERSE disturbance (price up, quantity
+  ## down). Read every IRF and historical-decomposition bar accordingly.
   shocks = list(
     list(
-      name = "aggregate_demand_shock",
+      name = "Industrial_Demand_Shock",
       restrictions = list(
         pun = list(sign = "+", horizons = 0),
         gas_price = list(sign = "+", horizons = 0),
@@ -145,18 +178,31 @@ config <- list(
       )
     ),
     list(
-      name = "gas_specific_shock",
+      name = "Gas_Specific_Shock",
       restrictions = list(
         pun = list(sign = "+", horizons = 0),
         gas_price = list(sign = "+", horizons = 0),
         ipi = list(sign = "-", horizons = 0),
         energy_consumption = list(sign = "-", horizons = 0)
       )
-  )
-),
+    ),
+    list(
+      name = "Non_Industrial_Demand_Shock",
+      restrictions = list(
+        pun = list(sign = "+", horizons = 0),
+        gas_price = list(sign = "+", horizons = 0),
+        ipi = list(sign = "-", horizons = 0),
+        energy_consumption = list(sign = "+", horizons = 0)
+      )
+    )
+  ),
   ## Sign-restriction search.
+  ## n_draws is set from the measured acceptance rate, not by habit: three
+  ## shocks and twelve restrictions over a 4x4 rotation leave ~0.16% of draws
+  ## admissible, so 10000 draws yielded an admissible SET of 18 -- too few to
+  ## call a set. 300000 puts it near 500 (~45 s).
   identification = list(
-    n_draws = 10000,
+    n_draws = 300000,
     horizon = 36,
     seed    = 6
   ),
@@ -171,6 +217,11 @@ config <- list(
 
   ## Frequentist bootstrap (Inoue & Kilian, 2013). The FULL identification
   ## search (draws_per_boot rotations) is re-run inside every replication.
+  ## draws_per_boot must clear the same ~0.16% acceptance rate: at 1000 the
+  ## expected admissible count per replication was 1.6, 8.6% of replications
+  ## found none at all, and half of those that succeeded rested on <= 2
+  ## rotations. 5000 puts the expectation near 8. Cost is linear -- the full
+  ## run is roughly 40 minutes.
   bootstrap = list(
     n_boot         = 2000,
     draws_per_boot = 1000,

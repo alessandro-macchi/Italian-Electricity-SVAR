@@ -21,6 +21,7 @@ source("04_var_model.R")
 source("05_sign_restrictions.R")
 source("06_bootstrap.R")
 source("07_fevd.R")
+source("08_historical_decomposition.R")
 
 dir.create(config$paths$output_dir, showWarnings = FALSE, recursive = TRUE)
 ```
@@ -222,6 +223,55 @@ admissible draws are kept, and the **Fry-Pagan median-target** draw (the
 single admissible model closest to the pointwise median IRF) is reported,
 rather than the pointwise median itself.
 
+Three shocks are labelled out of the $K = 4$ available, so identification is
+**partial** throughout: an aggregate demand shock, a gas-specific shock, and
+an electricity supply shock specific to the Italian market. Their restriction
+sets are constructed to be **pairwise disjoint**, so that no admissible
+rotation can satisfy two of them in the same column of $B_0$. This matters
+more than it may appear: when two labelled shocks share a region of the sign
+space, the same economic disturbance is assigned to different columns in
+different draws, and the pooled distribution of impulse responses mixes them
+-- the labelling problem of Fry & Pagan (2011, sec. 4). Two margins do the
+separating.
+
+The first is quantity. A disturbance that moves the electricity price and
+electricity consumption in the *same* direction is a shift of demand along an
+upward-sloping supply curve; one that moves them in *opposite* directions is
+a shift of supply along a downward-sloping demand curve. The sign of
+`energy_consumption` therefore separates the aggregate demand shock from the
+two contractionary shocks, and is the standard supply/demand identification
+argument (Kilian & Murphy, 2012).
+
+The second is the relative price. Both contractionary shocks raise PUN, so
+the level of the electricity price cannot tell them apart; what does is the
+electricity-price response *net of* the gas-price response,
+$\theta_{\text{pun}} - \theta_{\text{gas}}$ at impact. Under a gas-specific
+shock PUN rises *because* TTF rises, and pass-through in logs is less than
+one-for-one -- PUN also embeds the CO$_2$ price, non-fuel variable costs, and
+the hours in which gas is not the marginal technology -- so the contrast is
+negative. An electricity supply shock (plant outages, hydrological shortfall,
+low renewable output, constrained imports) originates downstream of the gas
+market, and Italy is a price taker on TTF, so PUN rises while the gas price
+stays roughly flat and the contrast is positive. This is a restriction on log
+responses, an elasticity comparison, and not a spark spread measured in
+EUR/MWh; it restricts neither price level. A zero restriction on the gas
+response would state the price-taking argument more directly, but requires
+the mixed sign-and-zero algorithm of Arias, Rubio-Ramírez & Waggoner (2018)
+in place of the Haar-uniform rotations used here.
+
+Industrial production is left **unrestricted** under the electricity supply
+shock. The macro cost of energy disturbances is the quantity this model is
+built to measure, and restricting the sign of `ipi` would assume a
+substantial part of that answer; the scales do not match either, since PUN is
+Italian while the industrial production index is EU-wide. It is retained
+under the gas-specific shock, where both the disturbance and the aggregate
+are European.
+
+Finally, a **sign normalisation**: a positive realisation of the
+gas-specific or the electricity supply shock is an *adverse* disturbance,
+raising price and lowering quantity. Impulse responses and historical
+decomposition contributions below are to be read in that direction.
+
 ```{r identification}
 ident <- identify_sign_restrictions(var_out$fit, config)
 
@@ -396,11 +446,102 @@ plot_fevd_grid <- function(fevd, band_names, var_labels) {
 plot_fevd_grid(fevd_mt, fevd_names, var_labels[ident$var_names])
 ```
 
+## Historical decomposition
+
+Where the FEVD asks how much of the *average* forecast error each shock
+explains, the historical decomposition asks what each shock did in each
+individual month of the estimation sample. It uses the same Fry-Pagan
+median-target model as the impulse responses and the variance decomposition
+above: the structural shocks are recovered by inverting that single $B_0$
+through the reduced-form residuals ($\varepsilon_t = B_0^{-1} u_t$) and
+convolved with the structural moving-average weights
+$\Theta_h = \Phi_h B_0$. Nothing is re-estimated and no rotation is redrawn.
+
+Identification is **partial** here in exactly the sense it is in the FEVD.
+$B_0$ is a full invertible $K \times K$ matrix, so all $K$ structural shocks
+are recoverable for this rotation, but only the shocks in `config$shocks`
+carry an economic label; the remaining columns are summed into a single
+`other shocks` band rather than rescaled away or dropped.
+
+The **baseline** is everything the structural shocks do not move: the
+intercept, the 11 monthly seasonal dummies, the exogenous block (the
+`energy_crisis` dummy and `res_capacity`), and the effect of the $p$
+presample values. It is therefore **not** a pure trend -- in particular the
+energy-crisis dummy's effect sits in the baseline, so the gas shock is
+credited only with what that dummy leaves unexplained, and the 2022 bars
+should be read against a baseline that has already shifted. Contributions of
+all $K$ shocks sum to the plotted deviation by construction, so the bars add
+up to the black line in every month.
+
+No bootstrap bands and no per-episode contribution tables are reported for
+the historical decomposition: it is the point-estimate path of the
+median-target model.
+
+```{r historical-decomposition}
+hd <- historical_decomposition(var_out, ident)
+cat(sprintf("Historical decomposition over %d months, %s to %s.\n",
+            nrow(hd$y_dev), min(hd$dates), max(hd$dates)))
+```
+
+```{r hd-plot, fig.width=9, fig.height=10}
+#' Stacked contribution bars over time, one panel per endogenous variable,
+#' with the actual deviation from baseline drawn on top in black. barplot()
+#' stacks mixed-sign columns wrong (every segment is laid out from zero
+#' upward, so negative contributions overwrite positive ones), so the
+#' contributions are split into their positive and negative parts and drawn
+#' as two stacked barplots sharing one ylim; the segments then meet at zero
+#' and their net total is the black line by construction.
+plot_hd_grid <- function(hd, var_labels) {
+  n_shocks <- length(hd$shock_names)
+  n_vars <- dim(hd$contrib)[2]
+  band_names <- c(gsub("_", " ", hd$shock_names), "other shocks")
+  ## Same shock -> colour mapping as the FEVD panels, grey for the shocks
+  ## the restrictions do not identify.
+  cols <- c(unname(pal[c("blue", "orange", "bluishgreen", "reddishpurple")])[
+    seq_len(n_shocks)], "grey85")
+  at <- seq(1, length(hd$dates), by = 12)
+
+  old_par <- theme_par(mfrow = c(n_vars, 1), mar = c(2.5, 4.5, 2.5, 1))
+  on.exit(par(old_par))
+
+  for (v in seq_len(n_vars)) {
+    ## All endogenous variables enter the VAR in logs, so x100 reads the
+    ## contributions as percent deviations, exactly as in the IRF grid.
+    m <- 100 * t(cbind(hd$contrib[, v, seq_len(n_shocks)],
+                       rowSums(hd$contrib[, v, -seq_len(n_shocks), drop = FALSE])))
+    pos <- pmax(m, 0)
+    neg <- pmin(m, 0)
+
+    ## Drawn empty first so the grid sits behind the bars (barplot() has no
+    ## panel.first) and to take the bar midpoints from its return value.
+    bp <- barplot(pos, space = 0, col = NA, border = NA,
+                  ylim = range(colSums(pos), colSums(neg)),
+                  ylab = "Percent deviation from baseline", main = var_labels[v])
+    grid_h()
+    barplot(pos, space = 0, col = cols, border = NA, add = TRUE, axes = FALSE)
+    barplot(neg, space = 0, col = cols, border = NA, add = TRUE, axes = FALSE)
+    abline(h = 0, col = "grey55")
+    lines(bp, 100 * hd$y_dev[, v], col = "black", lwd = 1.2)
+    axis(1, at = bp[at], labels = format(hd$dates[at], "%Y"))
+
+    if (v == 1) {
+      legend("topleft", legend = c(band_names, "actual deviation"),
+             fill = c(cols, NA), border = NA, col = "black",
+             lty = c(rep(NA, length(cols)), 1), lwd = c(rep(NA, length(cols)), 1.2),
+             bty = "o", box.col = NA, cex = 0.85,
+             bg = grDevices::adjustcolor("white", alpha.f = 0.85))
+    }
+  }
+}
+
+plot_hd_grid(hd, var_labels[ident$var_names])
+```
+
 ## Saved output
 
 ```{r save-output}
 saveRDS(list(config = config, var_out = var_out, ident = ident, boot_out = boot_out,
-             fevd_mt = fevd_mt),
+             fevd_mt = fevd_mt, hd = hd),
         file.path(config$paths$output_dir, "svar_results.rds"))
 cat("Saved results to", file.path(config$paths$output_dir, "svar_results.rds"), "\n")
 ```
