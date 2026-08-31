@@ -117,56 +117,64 @@ config <- list(
   ),
 
   ## Structural shocks for sign-restriction identification. One entry per
-  ## shock; `restrictions` maps EITHER a variable id (must match
-  ## `variables[[i]]$id`) OR a free name carrying `weights` -- a named vector
-  ## of variable ids to weights, i.e. a linear contrast of responses -- to a
-  ## sign ("+"/"-") and the impulse-response horizons (0 = impact) over
-  ## which that sign must hold. The identification code loops over this list
-  ## generically -- adding a shock or a restriction requires no code changes.
-  ## Restriction horizons were picked by checking the admissible-set
-  ## acceptance rate for this dataset (see README, point 7): tighter
-  ## horizon windows (e.g. 0:3 on both shocks) turned out to be
-  ## infeasible for this particular reduced-form VAR (0 rotations
-  ## admissible in 20000 draws) -- a real diagnostic finding, not a bug.
+  ## shock; `restrictions` maps a variable id (must match
+  ## `variables[[i]]$id`) to a sign ("+"/"-") and the impulse-response
+  ## horizons (0 = impact) over which that sign must hold. The
+  ## identification code loops over this list generically -- adding a shock
+  ## or a restriction requires no code changes.
   ##
-  ## `pun > 0` on impact holds for ALL THREE shocks by the merit order:
-  ## gas-fired plants set the marginal price in the large majority of Italian
-  ## hours, so any shock that raises TTF raises PUN, and a contraction of
-  ## domestic supply raises it directly. It binds hard -- roughly half the
-  ## rotations admissible without it have PUN falling on impact while gas
-  ## rises, which no account of the Italian merit order permits. It restricts
-  ## the SIGN of the response, not its magnitude, so it does not prejudge the
-  ## variance decomposition it sharpens (see the FEVD section).
+  ## The table below is SATURATED: every one of the 4 variables carries a
+  ## sign under every one of the 3 shocks, 12 restrictions in all. That is
+  ## what makes the labels stable (see below), and it is also what costs the
+  ## acceptance rate -- 0.14%, against 2.5% for the earlier half-empty table.
+  ## Restriction horizons are impact-only. Tighter windows (e.g. 0:3) turned
+  ## out to be infeasible for this reduced-form VAR (0 rotations admissible
+  ## in 20000 draws) -- a real informativeness finding, not a bug.
   ##
-  ## The three restriction sets are PAIRWISE DISJOINT by construction, so no
-  ## admissible rotation can satisfy two of them in the same column and the
-  ## shock labels cannot switch across draws (the labelling problem of
-  ## Fry & Pagan, 2011, sec. 4). Two margins do the separating:
-  ##   - `energy_consumption` splits the demand shock (quantity up) from the
-  ##     two contractionary shocks (quantity down). Price and quantity moving
-  ##     together is a demand shift, in opposite directions a supply shift.
-  ##   - `pun_minus_gas`, the log electricity-price response net of the log
-  ##     gas-price response, splits the two contractionary shocks. Under a
-  ##     gas shock PUN rises BECAUSE gas rises, and pass-through is less than
-  ##     one-for-one (PUN also carries CO2, non-fuel variable costs, and the
-  ##     hours where gas is not marginal), so the contrast is <= 0. An
-  ##     electricity-specific supply shock -- outages, hydro shortfall, low
-  ##     RES output, import constraints -- originates DOWNSTREAM of gas, and
-  ##     Italy is a price taker on TTF, so PUN rises with gas roughly flat and
-  ##     the contrast is >= 0. This is a relative-price restriction on log
-  ##     responses, not a spark spread in EUR/MWh: it compares elasticities,
-  ##     and it deliberately does not restrict the level of either price.
+  ##                        Industrial   Gas-specific   Non-industrial
+  ##   pun                       +             +              +
+  ##   gas_price                 +             +              +
+  ##   energy_consumption        +             -              +
+  ##   ipi                       +             -              -
   ##
-  ## `ipi` is deliberately left FREE under the electricity supply shock. The
-  ## macro cost of energy shocks is what the IRFs and the FEVD are meant to
-  ## MEASURE, and restricting it would assume the finding; the scales do not
-  ## match either, since `pun` is Italian and `ipi` is EU-wide. It is kept
-  ## under the gas shock, where the disturbance and the aggregate are both
-  ## European.
+  ## `gas_price > 0` under all three shocks is a SIGN NORMALISATION, not an
+  ## economic assumption: each column of B0 is defined up to sign, and fixing
+  ## it so gas rises makes the three shocks comparable (Guntner et al., 2024,
+  ## normalise every shock to raise the real gas price the same way).
   ##
-  ## Sign normalisation: a POSITIVE realisation of `gas_specific_shock` or
-  ## `electricity_supply_shock` is an ADVERSE disturbance (price up, quantity
-  ## down). Read every IRF and historical-decomposition bar accordingly.
+  ## `pun > 0` under all three IS an economic restriction, and it comes from
+  ## the merit order: gas-fired plants set the marginal price in the large
+  ## majority of Italian hours, so any shock that raises TTF raises PUN, and
+  ## a contraction of domestic demand-side pressure raises it directly. It
+  ## binds hard -- roughly half the rotations admissible without it have PUN
+  ## falling on impact while gas rises, which no account of the Italian merit
+  ## order permits. Note what it does and does not settle: the SIGN of the
+  ## impact pass-through is imposed, its MAGNITUDE, persistence and share of
+  ## forecast error variance are estimated.
+  ##
+  ## The three restriction sets are PAIRWISE DISJOINT, so no admissible
+  ## rotation can satisfy two of them in the same column and the shock labels
+  ## cannot switch across draws (the labelling problem of Fry & Pagan, 2011,
+  ## sec. 4). `warn_if_labels_overlap()` in 05_sign_restrictions.R checks this
+  ## on the draws actually used. Two margins do the separating:
+  ##   - `energy_consumption` splits the gas-specific shock (quantity down)
+  ##     from both demand shocks (quantity up). Price and quantity moving
+  ##     together is a demand shift, in opposite directions a supply shift --
+  ##     the 2x2 logic of section 3.1 applied to the electricity market, the
+  ##     one market here whose price AND quantity are both observed.
+  ##   - `ipi` splits the two demand shocks. Industrial demand raises euro
+  ##     area production by construction; non-industrial demand (residential
+  ##     and weather-driven heating and cooling) raises energy prices while
+  ##     the higher energy bill weighs on industrial output.
+  ##
+  ## Weather is deliberately NOT controlled for in the exogenous block: the
+  ## non-industrial demand shock is meant to carry that content, and putting
+  ## HDD/CDD among the exogenous regressors would partial it out of the
+  ## residuals and leave the shock with nothing to identify.
+  ##
+  ## Sign normalisation: a POSITIVE realisation of `Gas-Specific_Shock` is an
+  ## ADVERSE disturbance (prices up, activity and quantity down). Read every
+  ## IRF and historical-decomposition bar accordingly.
   shocks = list(
     list(
       name = "Industrial_Demand_Shock",
@@ -178,21 +186,21 @@ config <- list(
       )
     ),
     list(
-      name = "Gas-Specific_Shock",
-      restrictions = list(
-        pun = list(sign = "+", horizons = 0),
-        gas_price = list(sign = "+", horizons = 0),
-        ipi = list(sign = "-", horizons = 0),
-        energy_consumption = list(sign = "-", horizons = 0)
-      )
-    ),
-    list(
       name = "Non-Industrial_Demand_Shock",
       restrictions = list(
         pun = list(sign = "+", horizons = 0),
         gas_price = list(sign = "+", horizons = 0),
         ipi = list(sign = "-", horizons = 0),
         energy_consumption = list(sign = "+", horizons = 0)
+      )
+    ),
+    list(
+      name = "Gas-Specific_Shock",
+      restrictions = list(
+        pun = list(sign = "+", horizons = 0),
+        gas_price = list(sign = "+", horizons = 0),
+        ipi = list(sign = "-", horizons = 0),
+        energy_consumption = list(sign = "-", horizons = 0)
       )
     )
   ),
@@ -224,7 +232,7 @@ config <- list(
   ## run is roughly 40 minutes.
   bootstrap = list(
     n_boot         = 2000,
-    draws_per_boot = 4000,
+    draws_per_boot = 5000,
     conf_level     = 0.68,
     seed           = 6
   )

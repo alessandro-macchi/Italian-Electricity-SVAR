@@ -2,16 +2,24 @@
 ## Frequentist bootstrap inference (Inoue & Kilian, 2013): resample the
 ## reduced-form VAR residuals, rebuild the sample recursively, re-estimate
 ## the VAR, and re-run the FULL sign-restriction search (not just a
-## coefficient resample) inside every replication. Bands are the pointwise
+## coefficient resample) inside every replication. The exogenous block is
+## held FIXED across replications (a fixed-regressor bootstrap): its
+## estimated contribution is added back when the sample is rebuilt and the
+## same block is passed to every re-estimation, so each replication
+## reproduces the specification that was actually estimated rather than a
+## seasonless, trendless variant of it. Bands are the pointwise
 ## percentiles of ALL admissible draws pooled across replications, so they
 ## span estimation uncertainty (reduced-form coefficients and Sigma_u) AND
 ## identification uncertainty (the whole set of rotations Q consistent with
 ## the restrictions).
 ## -----------------------------------------------------------------------
 
-#' Extract per-equation coefficient matrices A_1..A_p and the intercept from
-#' a fitted vars::VAR object (deterministic term "const" or "none" only).
-extract_var_coefs <- function(fit, p) {
+#' Extract per-equation coefficient matrices A_1..A_p, the intercept, and --
+#' when `exo` is supplied -- the k x ncol(exo) matrix B of exogenous
+#' coefficients, from a fitted vars::VAR object (deterministic term "const"
+#' or "none" only). Exogenous coefficients are named after the exogen
+#' matrix's columns, so they are read back by name.
+extract_var_coefs <- function(fit, p, exo = NULL) {
   var_names <- names(fit$varresult)
   k <- length(var_names)
   coef_list <- lapply(fit$varresult, stats::coef)
@@ -28,13 +36,27 @@ extract_var_coefs <- function(fit, p) {
     }
   }
 
-  list(A = A, const = const, var_names = var_names)
+  B <- NULL
+  if (!is.null(exo)) {
+    B <- matrix(0, nrow = k, ncol = ncol(exo),
+                dimnames = list(var_names, colnames(exo)))
+    for (i in seq_len(k)) {
+      cf <- coef_list[[i]]
+      B[i, ] <- vapply(colnames(exo), function(xn) unname(cf[[xn]]), numeric(1))
+    }
+  }
+
+  list(A = A, const = const, B = B, var_names = var_names)
 }
 
 #' Recursively simulate a VAR(p) path of the same length as `init` +
 #' `nrow(resid_mat)`, using fixed presample values `init` and a given
-#' (resampled) residual matrix.
-simulate_var <- function(A, const, init, resid_mat) {
+#' (resampled) residual matrix. `B`/`exo` add the exogenous block's
+#' contribution B %*% x_t, with `exo` indexed on the SAME rows as the
+#' simulated path (its row t matches sim row t, presample included), so the
+#' rebuilt sample carries the seasonality, the RES trend and the crisis
+#' dummy that the estimated model attributes to them.
+simulate_var <- function(A, const, init, resid_mat, B = NULL, exo = NULL) {
   p <- dim(A)[3]
   k <- dim(A)[1]
   n_new <- nrow(resid_mat)
@@ -46,12 +68,25 @@ simulate_var <- function(A, const, init, resid_mat) {
   for (t in (p + 1):Tt) {
     yt <- const
     for (l in seq_len(p)) yt <- yt + A[, , l] %*% sim[t - l, ]
+    if (!is.null(B)) yt <- yt + B %*% exo[t, ]
     sim[t, ] <- yt + resid_mat[t - p, ]
   }
 
   colnames(sim) <- colnames(init)
   sim
 }
+
+## The exogenous block must actually reach the simulated path: with a zero
+## VAR part, zero intercept and zero residuals, each observation is exactly
+## that period's exogenous contribution.
+stopifnot({
+  s <- simulate_var(
+    A = array(0, dim = c(2, 2, 1)), const = c(0, 0),
+    init = matrix(0, nrow = 1, ncol = 2), resid_mat = matrix(0, nrow = 2, ncol = 2),
+    B = matrix(1, nrow = 2, ncol = 1), exo = matrix(c(0, 5, 7), ncol = 1)
+  )
+  all(s[2, ] == 5) && all(s[3, ] == 7)
+})
 
 #' One bootstrap replication: resample residuals, rebuild the sample,
 #' re-estimate the VAR, and re-run the sign-restriction search. Returns the
@@ -61,13 +96,14 @@ simulate_var <- function(A, const, init, resid_mat) {
 #' the bands too narrow. The FEVD is computed here too, from this
 #' replication's own IRF array and reduced form, so one bootstrap run yields
 #' both IRF and FEVD bands. Returns NULL if no admissible rotation is found.
-run_one_bootstrap_replication <- function(fit, endo, p, config) {
-  coefs <- extract_var_coefs(fit, p)
+run_one_bootstrap_replication <- function(fit, endo, exo, p, config) {
+  coefs <- extract_var_coefs(fit, p, exo)
   resid_mat <- stats::residuals(fit)
   boot_resid <- resid_mat[sample(seq_len(nrow(resid_mat)), replace = TRUE), , drop = FALSE]
 
-  sim <- simulate_var(coefs$A, coefs$const, init = endo[seq_len(p), , drop = FALSE], resid_mat = boot_resid)
-  boot_fit <- vars::VAR(sim, p = p, type = config$var$type)
+  sim <- simulate_var(coefs$A, coefs$const, init = endo[seq_len(p), , drop = FALSE],
+                      resid_mat = boot_resid, B = coefs$B, exo = exo)
+  boot_fit <- vars::VAR(sim, p = p, type = config$var$type, exogen = exo)
 
   ident <- tryCatch(
     identify_sign_restrictions(boot_fit, config,
@@ -132,11 +168,11 @@ stopifnot({
 #' Run the full Inoue-Kilian (2013) bootstrap: `n_boot` replications, each
 #' re-running the entire identification search, then pointwise percentile
 #' bands over every admissible draw pooled across replications.
-run_bootstrap <- function(fit, endo, p, config) {
+run_bootstrap <- function(fit, endo, exo, p, config) {
   set.seed(config$bootstrap$seed)
 
   replications <- purrr::map(seq_len(config$bootstrap$n_boot), function(b) {
-    run_one_bootstrap_replication(fit, endo, p, config)
+    run_one_bootstrap_replication(fit, endo, exo, p, config)
   })
   ok <- purrr::compact(replications)
 

@@ -37,29 +37,12 @@ structural_irf <- function(phi, b0) {
   irf
 }
 
-#' Check one shock's restrictions (variable -> sign over horizons) against
-#' one column of the structural IRF array.
-#'
-#' A restriction is keyed EITHER by a variable id -- a sign on that single
-#' response -- OR by a free name carrying `weights`, a named vector of
-#' variable ids to weights defining a linear contrast of responses. The
-#' relative-price restrictions use the latter: c(pun = 1, gas_price = -1) is
-#' the electricity-price response net of the response of its marginal fuel
-#' cost, which is what separates a gas shock from an electricity-specific
-#' supply shock (see the `shocks` comment in 00_config.R).
+#' Check one shock's restrictions (variable id -> sign over horizons)
+#' against one column of the structural IRF array.
 shock_restrictions_hold <- function(irf_struct, col, restrictions, var_index) {
-  for (key in names(restrictions)) {
-    r <- restrictions[[key]]
-    w <- if (is.null(r$weights)) stats::setNames(1, key) else r$weights
-    rows <- var_index[names(w)]
-
-    ## [length(rows), 1, length(horizons)]. The column dimension is a
-    ## singleton, so R recycles `w` down the first dimension exactly once per
-    ## horizon; summing over that dimension leaves the contrast at each
-    ## horizon. The single-variable case is w = 1 and reduces to the plain
-    ## response, so both kinds of restriction go through one code path.
-    block <- irf_struct[rows, col, r$horizons + 1, drop = FALSE] * w
-    values <- apply(block, 3, sum)
+  for (var_id in names(restrictions)) {
+    r <- restrictions[[var_id]]
+    values <- irf_struct[var_index[[var_id]], col, r$horizons + 1]
 
     ok <- if (r$sign == "+") all(values >= 0) else all(values <= 0)
     if (!ok) return(FALSE)

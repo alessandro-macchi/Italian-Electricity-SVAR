@@ -304,7 +304,7 @@ re-estimated, and the **entire identification search above is re-run**
 inside every replication -- not just a coefficient resample.
 
 ```{r bootstrap}
-boot_out <- run_bootstrap(var_out$fit, var_out$endo, var_out$p, config)
+boot_out <- run_bootstrap(var_out$fit, var_out$endo, var_out$exo, var_out$p, config)
 
 cat(sprintf(
   "Bootstrap: %d replications, %d succeeded, %d found no admissible rotation.\n",
