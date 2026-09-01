@@ -82,6 +82,16 @@ theme_par <- function(...) {
 
 grid_h <- function() grid(nx = NA, ny = NULL, col = "grey92", lty = 1, lwd = 0.7)
 
+#' Legend in the figure's top outer margin. The FEVD and historical
+#' decomposition panels are filled edge to edge, so a legend placed inside any
+#' one of them sits on the data. Pair with `oma = c(0, 0, 3, 0)` in the
+#' theme_par() call so the outer margin exists to draw into.
+top_legend <- function(...) {
+  legend(grconvertX(0.5, "ndc", "user"), grconvertY(1, "ndc", "user"),
+         xjust = 0.5, yjust = 1, xpd = NA,
+         border = NA, bty = "n", cex = 0.85, ...)
+}
+
 #' Draw one plot into `plots_dir/<variable id>/<name>.png` instead of the
 #' report -- the report shows the combined grids, the per-variable files are
 #' for use outside it.
@@ -340,7 +350,9 @@ plot_irf_grid <- function(mt_irf, bands, var_names, shock_names, var_labels) {
   n_vars <- length(var_names)
   h <- seq_len(dim(mt_irf)[3]) - 1
 
-  old_par <- theme_par(mfrow = c(n_vars, n_shocks), mar = c(3, 4, 3, 1))
+  ## Bottom margin 4, not 3: the last row carries the "Horizon (months)"
+  ## label at mgp[1] = 2.4 lines, which a 3-line margin clips.
+  old_par <- theme_par(mfrow = c(n_vars, n_shocks), mar = c(4, 4, 3, 1))
   on.exit(par(old_par))
 
   for (v in seq_len(n_vars)) {
@@ -423,7 +435,8 @@ plot_fevd_grid <- function(fevd, band_names, var_labels) {
   cols <- c(unname(pal[c("blue", "orange", "bluishgreen", "reddishpurple")])[
     seq_len(length(band_names) - 1)], "grey85")
 
-  old_par <- theme_par(mfrow = c(ceiling(n_vars / 2), 2), mar = c(3.5, 4, 3, 1))
+  old_par <- theme_par(mfrow = c(ceiling(n_vars / 2), 2), mar = c(3.5, 4, 3, 1),
+                       oma = c(0, 0, 3, 0))
   on.exit(par(old_par))
 
   for (v in seq_len(n_vars)) {
@@ -435,12 +448,8 @@ plot_fevd_grid <- function(fevd, band_names, var_labels) {
     for (b in seq_along(band_names)) {
       polygon(c(h, rev(h)), c(cum[b, ], rev(cum[b + 1, ])), col = cols[b], border = NA)
     }
-    if (v == 1) {
-      legend("bottomright", legend = band_names, fill = cols, border = NA,
-             bty = "o", box.col = NA, cex = 0.85,
-             bg = grDevices::adjustcolor("white", alpha.f = 0.85))
-    }
   }
+  top_legend(legend = band_names, fill = cols, ncol = 2)
 }
 
 plot_fevd_grid(fevd_mt, fevd_names, var_labels[ident$var_names])
@@ -501,7 +510,8 @@ plot_hd_grid <- function(hd, var_labels) {
     seq_len(n_shocks)], "grey85")
   at <- seq(1, length(hd$dates), by = 12)
 
-  old_par <- theme_par(mfrow = c(n_vars, 1), mar = c(2.5, 4.5, 2.5, 1))
+  old_par <- theme_par(mfrow = c(n_vars, 1), mar = c(2.5, 4.5, 2.5, 1),
+                       oma = c(0, 0, 3, 0))
   on.exit(par(old_par))
 
   for (v in seq_len(n_vars)) {
@@ -523,15 +533,11 @@ plot_hd_grid <- function(hd, var_labels) {
     abline(h = 0, col = "grey55")
     lines(bp, 100 * hd$y_dev[, v], col = "black", lwd = 1.2)
     axis(1, at = bp[at], labels = format(hd$dates[at], "%Y"))
-
-    if (v == 1) {
-      legend("topleft", legend = c(band_names, "actual deviation"),
-             fill = c(cols, NA), border = NA, col = "black",
-             lty = c(rep(NA, length(cols)), 1), lwd = c(rep(NA, length(cols)), 1.2),
-             bty = "o", box.col = NA, cex = 0.85,
-             bg = grDevices::adjustcolor("white", alpha.f = 0.85))
-    }
   }
+  top_legend(legend = c(band_names, "actual deviation"),
+             fill = c(cols, NA), col = "black",
+             lty = c(rep(NA, length(cols)), 1), lwd = c(rep(NA, length(cols)), 1.2),
+             ncol = 3)
 }
 
 plot_hd_grid(hd, var_labels[ident$var_names])
