@@ -87,14 +87,9 @@ johansen_test <- function(raw_data, variables_cfg, p) {
   levels_mat <- sapply(endo_cfg, function(v) level_form(raw_data[[v$id]], v$transform))
   colnames(levels_mat) <- purrr::map_chr(endo_cfg, "id")
 
-  dumvar <- cbind(
-    as.matrix(raw_data[, c("energy_crisis")]),
-    monthly_dummies(raw_data$date)
-  )
 
   keep <- stats::complete.cases(levels_mat)
   levels_mat <- levels_mat[keep, , drop = FALSE]
-  dumvar <- dumvar[keep, , drop = FALSE]
 
   jo <- urca::ca.jo(levels_mat, type = "trace", ecdet = "const", K = p,
                      spec = "transitory")

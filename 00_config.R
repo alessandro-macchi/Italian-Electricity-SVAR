@@ -88,12 +88,6 @@ config <- list(
       det = "const", za = FALSE
     ),
     list(
-      id = "energy_crisis", file = "energy_crisis_dummy.csv",
-      date_col = "Date", date_format = "%m-%Y",
-      value_col = "energy_crisis_dummy", delim = ",", decimal = ".",
-      label = "Energy Crisis Dummy", transform = "level", role = "exogenous"
-    ),
-    list(
       id = "res_capacity", file = "ita_res_capacity.csv",
       date_col = "Date", date_format = "%m-%Y",
       value_col = "RES Installed Capacity (MW)", delim = ",", decimal = ".",
