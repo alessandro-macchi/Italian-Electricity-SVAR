@@ -50,7 +50,7 @@ config <- list(
   ##   role        "endogenous" | "exogenous"
   ##   offset      optional; constant added to the raw value column at load
   ##               time, before any transform. Use it when a source file stores
-  ##               a series shifted off its natural scale (see `ipi`).
+  ##               a series shifted off its natural scale. Currently unused.
   ##   det         endogenous only; deterministic terms partialled out before
   ##               the unit-root tests in 03_sanity_checks.R -- any of "const",
   ##               "trend", "season" (centred monthly dummies)
@@ -81,11 +81,11 @@ config <- list(
       det = c("const", "season"), za = FALSE
     ),
     list(
-      id = "ipi", file = "eu_ipi.csv",
-      date_col = "date", date_format = "%d/%m/%Y",
-      value_col = "ipi", delim = ";", decimal = ".", offset = 100,
-      label = "EU Industrial Production Index", transform = "log", role = "endogenous",
-      det = "const", za = FALSE
+      id = "ipi", file = "ita_ipi.csv",
+      date_col = "time", date_format = "%Y-%m",
+      value_col = "value", delim = ",", decimal = ".",
+      label = "Italian Industrial Production Index", transform = "log", role = "endogenous",
+      det = c("const", "season"), za = FALSE
     ),
     list(
       id = "res_capacity", file = "ita_res_capacity.csv",
