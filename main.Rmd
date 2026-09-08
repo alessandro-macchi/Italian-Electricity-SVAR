@@ -408,7 +408,7 @@ FEVD is computed inside each replication, so no second bootstrap pass is run.
 
 ```{r fevd-table}
 fevd_mt <- fevd_median_target(var_out$fit, ident, config$identification$horizon)
-fevd_names <- c(gsub("_", " ", ident$shock_names), "unidentified")
+fevd_names <- c(gsub("_", " ", ident$shock_names), "Unidentified")
 
 fevd_tbl <- purrr::imap_dfr(config$fevd$horizons, function(h, k) {
   tbl <- tibble::tibble(horizon = h, variable = unname(var_labels[ident$var_names]))
@@ -503,7 +503,7 @@ cat(sprintf("Historical decomposition over %d months, %s to %s.\n",
 plot_hd_grid <- function(hd, var_labels) {
   n_shocks <- length(hd$shock_names)
   n_vars <- dim(hd$contrib)[2]
-  band_names <- c(gsub("_", " ", hd$shock_names), "other shocks")
+  band_names <- c(gsub("_", " ", hd$shock_names), "Other Shocks")
   ## Same shock -> colour mapping as the FEVD panels, grey for the shocks
   ## the restrictions do not identify.
   cols <- c(unname(pal[c("blue", "orange", "bluishgreen", "reddishpurple")])[
