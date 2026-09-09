@@ -68,9 +68,9 @@ config <- list(
     ),
     list(
       id = "gas_price", file = "ttf.csv",
-      date_col = "Date", date_format = "%d/%m/%Y",
-      value_col = "Price", delim = ";", decimal = ".",
-      label = "TTF Gas Price, Settlement (EUR/MWh)", transform = "log", role = "endogenous",
+      date_col = "Date", date_format = "%m-%Y",
+      value_col = "Price", delim = ",", decimal = ".",
+      label = "TTF Gas Price, Close (EUR/MWh)", transform = "log", role = "endogenous",
       det = "const", za = TRUE
     ),
     list(
