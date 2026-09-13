@@ -8,6 +8,7 @@
 ##   - change lag selection                  -> edit `lag_selection`
 ##   - add/edit a structural shock           -> edit `shocks`
 ##   - change bootstrap settings             -> edit `bootstrap`
+##   - change conditional-forecast settings  -> edit `cf`
 ## -----------------------------------------------------------------------
 
 config <- list(
@@ -229,5 +230,23 @@ config <- list(
     draws_per_boot = 5000,
     conf_level     = 0.68,
     seed           = 6
+  ),
+
+  ## Conditional forecast (09_conditional_forecast.R, thesis sec. 5.4). The
+  ## parameters stay FIXED at the estimates above: nothing is re-estimated or
+  ## re-identified on the months after `sample$end`.
+  ##   data_end       last month loaded; it is the forecast origin, and a
+  ##                  variable missing there is nowcast
+  ##   attack_month   first month whose `attack_shocks` the ex-post
+  ##                  counterfactual switches off -- PLACEHOLDER, date to confirm
+  ##   attack_shocks  names from `shocks`; "Unlabelled" = column 4 of B0
+  ##   horizon_end    last forecast month
+  ##   c1_window      months whose median-target gas-specific shocks C1 replays
+  cf = list(
+    data_end      = "2026-08-01",
+    attack_month  = "2026-03-01",
+    attack_shocks = "Gas-Specific_Shock",
+    horizon_end   = "2027-12-01",
+    c1_window     = c("2021-09-01", "2022-08-01")
   )
 )

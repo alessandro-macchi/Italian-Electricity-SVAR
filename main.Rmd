@@ -22,6 +22,11 @@ source("05_sign_restrictions.R")
 source("06_bootstrap.R")
 source("07_fevd.R")
 source("08_historical_decomposition.R")
+source("09_conditional_forecast.R")
+
+## Month names in English whatever the system locale: the conditional-forecast
+## tables and date axes print them.
+invisible(Sys.setlocale("LC_TIME", "C"))
 
 dir.create(config$paths$output_dir, showWarnings = FALSE, recursive = TRUE)
 ```
@@ -543,11 +548,223 @@ plot_hd_grid <- function(hd, var_labels) {
 plot_hd_grid(hd, var_labels[ident$var_names])
 ```
 
+## Conditional forecast
+
+The conditional forecasts hold the reduced form and the admissible rotations
+**fixed** at the 2006--2025 estimates above: nothing is re-estimated and no
+rotation is redrawn on the 2026 data. Every series is reloaded to
+`cf$data_end` with the same transformations; RES installed capacity, which
+has no 2026 values, is carried forward by its last monthly step. The
+one-step-ahead forecast error of month $t$ uses the fixed coefficients and
+the *realised* lags, $u_t = y_t - \hat y_{t|t-1}$, and the structural shocks
+are $\varepsilon_t = B_0^{-1} u_t$, in standard deviations. A variable
+missing in the last data month is set to its expectation given that month's
+observed errors, $E[u_m \mid u_o] = \Sigma_{mo} \Sigma_{oo}^{-1} u_o$: a
+**nowcast**, not data.
+
+Every forward path is the zero-residual forecast from the last data month
+plus the effect of an $H \times K$ matrix $W$ of future structural shocks,
+$\sum_{s \le t} \Theta_{t-s} w_s$ -- the historical decomposition's
+convolution, run forward. Bands are
+`r sprintf("%.0f%%", 100 * config$bootstrap$conf_level)` pointwise
+percentiles over the admissible rotations: they measure identification
+uncertainty alone, with the reduced form at its point estimate, and no
+bootstrap is run here.
+
+```{r conditional-forecast}
+cf_out <- conditional_forecast(var_out, ident, hd, config)
+pct_cf <- sprintf("%.0f%%", 100 * config$bootstrap$conf_level)
+n_cf <- length(cf_out$dates)
+
+cat(sprintf("Ex post: %s to %s. Forecast from %s: %s to %s (%d months).\n",
+            format(min(cf_out$a_dates), "%b %Y"), format(max(cf_out$a_dates), "%b %Y"),
+            format(cf_out$dates[n_cf], "%b %Y"), format(min(cf_out$fdates), "%b %Y"),
+            format(max(cf_out$fdates), "%b %Y"), length(cf_out$fdates)))
+if (length(cf_out$nowcast) > 0) {
+  cat(sprintf("Nowcast, not data (%s): %s.\n", format(cf_out$dates[n_cf], "%b %Y"),
+              paste(sprintf("%s = %.1f", cf_out$nowcast, exp(cf_out$y[n_cf, cf_out$nowcast])),
+                    collapse = ", ")))
+}
+cat(sprintf(paste("Checks, max abs error: one-step error vs VAR residual %.1e;",
+                  "TTF vs target %.1e; reference path across rotations %.1e.\n"),
+            cf_out$checks[[1]], cf_out$checks[[2]], cf_out$checks[[3]]))
+```
+
+### Ex post: the 2026 shocks
+
+The one-step-ahead structural shocks of the months after the estimation
+sample in which all four variables are observed. The attack month
+(`cf$attack_month`) is set against March 2022 and against the distribution
+of $|\varepsilon|$ over the estimation sample, both for the median-target
+model. Switching `cf$attack_shocks` off from the attack month on removes
+their contribution, $\sum_{s \ge \text{attack}} \Theta_{t-s} \varepsilon_s$,
+from the data.
+
+```{r cf-shock-table}
+knitr::kable(cf_out$shock_table, digits = 0, caption = paste0(
+  "One-step-ahead structural shocks (s.d.): median-target model, ", pct_cf,
+  " band over admissible rotations in brackets. Percentile: share of estimation-sample ",
+  "months with a smaller |shock|, median-target model."))
+```
+
+```{r cf-plot-fns}
+## Same shock -> colour mapping as the FEVD and historical-decomposition
+## panels, grey for the shock the restrictions do not label.
+cf_cols <- stats::setNames(
+  c(unname(pal[c("blue", "orange", "bluishgreen", "reddishpurple")])[seq_along(ident$shock_names)],
+    "grey85"),
+  cf_out$shock_names)
+
+#' One path with its rotation band behind it.
+band_line <- function(x, mid, lo, hi, col) {
+  polygon(c(x, rev(x)), c(lo, rev(hi)),
+          col = grDevices::adjustcolor(col, alpha.f = 0.18), border = NA)
+  lines(x, mid, col = col, lwd = 2)
+}
+
+#' One panel per structural shock: the median-target one-step shock of each
+#' ex-post month (bars, s.d.) with its rotation band (whiskers). The shaded
+#' month is the attack month.
+plot_cf_shocks <- function(cf, cols) {
+  x <- seq_along(cf$a_dates)
+  a <- match(cf$attack, cf$a_dates)
+  old_par <- theme_par(mfrow = c(2, 2), mar = c(3, 4, 3, 1))
+  on.exit(par(old_par))
+
+  for (j in seq_along(cf$shock_names)) {
+    plot(range(x) + c(-0.5, 0.5), range(0, cf$eps$lower[, j], cf$eps$upper[, j]),
+         type = "n", xaxt = "n", xlab = "", ylab = "Shock (s.d.)",
+         main = gsub("_", " ", cf$shock_names[j]),
+         panel.first = {
+           rect(a - 0.5, -1e6, a + 0.5, 1e6, col = "grey93", border = NA)
+           grid_h()
+         })
+    rect(x - 0.35, 0, x + 0.35, cf$eps$mt[, j], col = cols[j], border = NA)
+    arrows(x, cf$eps$lower[, j], x, cf$eps$upper[, j], angle = 90, code = 3,
+           length = 0.03, col = "grey30")
+    abline(h = 0, col = "grey55")
+    axis(1, at = x, labels = format(cf$a_dates, "%b"))
+  }
+}
+
+#' One forward panel: the reference path dashed and each of `readings` with
+#' its rotation band, all from the origin month. PUN and TTF in EUR/MWh after
+#' the observed months since Jan 2025; consumption and IPI in % (100 x log)
+#' deviation from the reference path.
+plot_cf_panel <- function(cf, v, readings, cols, main) {
+  n <- length(cf$dates)
+  xf <- c(cf$dates[n], cf$fdates)
+  level <- v %in% c("pun", "gas_price")
+  past <- level & cf$dates >= as.Date("2025-01-01")
+  path <- function(q, r) {
+    p <- q[, v, r]
+    if (level) exp(c(cf$y[n, v], p)) else c(0, 100 * (p - cf$paths$mt[, v, "reference"]))
+  }
+
+  plot(range(cf$dates[past], xf),
+       range(exp(cf$y[past, v]), path(cf$paths$mt, "reference"),
+             sapply(readings, path, q = cf$paths$lower),
+             sapply(readings, path, q = cf$paths$upper)),
+       type = "n", xlab = "", ylab = if (level) "EUR/MWh" else "% deviation from reference",
+       main = main, panel.first = grid_h())
+  for (r in readings) {
+    band_line(xf, path(cf$paths$mt, r), path(cf$paths$lower, r), path(cf$paths$upper, r),
+              cols[[r]])
+  }
+  ## Explicit black: theme_par()'s `fg` also sets the default line colour.
+  lines(xf, path(cf$paths$mt, "reference"), lty = 2, lwd = 1.5, col = "black")
+  if (level) lines(cf$dates[past], exp(cf$y[past, v]), lwd = 1.5, col = "black")
+}
+```
+
+```{r cf-shocks-plot, fig.width=9, fig.height=6}
+plot_cf_shocks(cf_out, cf_cols)
+```
+
+```{r cf-pun-plot, fig.width=7, fig.height=4.5}
+cf_col <- cf_cols[[config$cf$attack_shocks[1]]]
+theme_par(mar = c(3, 4.5, 3, 1), oma = c(0, 0, 3, 0))
+with(cf_out$pun_cf, {
+  plot(cf_out$a_dates, actual, type = "n", ylim = range(actual, lower, upper),
+       xlab = "", ylab = "EUR/MWh", main = "PUN: actual and without the attack shocks",
+       panel.first = grid_h())
+  abline(v = cf_out$attack, lty = 2, col = "grey55")
+  band_line(cf_out$a_dates, mt, lower, upper, cf_col)
+  lines(cf_out$a_dates, actual, lwd = 2, col = "black")
+})
+top_legend(legend = c("actual", "without the attack shocks"), col = c("black", cf_col),
+           lwd = 2, ncol = 2)
+```
+
+```{r cf-gap-table}
+knitr::kable(cf_out$gap_table, caption = paste0(
+  "PUN (EUR/MWh) from the attack month on: actual, without the attack shocks, and their ",
+  "contribution (the difference); median-target model, ", pct_cf,
+  " band over admissible rotations in brackets."))
+```
+
+### Persistence (D1)
+
+TTF is held at its last observed level to `cf$horizon_end`, and the gap $r_t$
+between that target and the zero-residual forecast is closed three ways. With
+all shocks free, the minimum-norm shocks $w = R'(RR')^{-1} r$ (Waggoner & Zha,
+1999), where $R$ collects $\Theta_{t-s}[\text{TTF}, j]$ over months $s \le t$
+and shocks $j$, give the **reference path**: the path is the same under every
+admissible rotation, the implied shocks are not. With one shock alone --
+gas-specific, or industrial demand -- the shocks solve a lower-triangular
+system month by month, every other shock at zero. That system divides by the
+impact response of TTF to the shock, which the sign restriction bounds only at
+zero; in the admissible rotations where it is nearly zero the implied shocks
+explode, so a single-shock reading enters its band only in the rotations where
+it is numerically defined (TTF on the target and every path finite). PUN and
+TTF are in EUR/MWh; consumption and IPI in percent (100 x log) deviation from
+the reference path.
+
+```{r cf-d1-plot, fig.width=9, fig.height=7}
+cat(sprintf(paste("Single-shock readings numerically defined in %d (gas-specific) and %d",
+                  "(industrial demand) of %d admissible rotations.\n"),
+            cf_out$n_defined[["gas"]], cf_out$n_defined[["demand"]], cf_out$n_rotations))
+
+d1_cols <- c(gas = cf_cols[["Gas-Specific_Shock"]], demand = cf_cols[["Industrial_Demand_Shock"]])
+theme_par(mfrow = c(2, 2), mar = c(3, 4.5, 3, 1), oma = c(0, 0, 3, 0))
+for (v in c("pun", "gas_price", "energy_consumption", "ipi")) {
+  plot_cf_panel(cf_out, v, names(d1_cols), d1_cols, var_labels[[v]])
+}
+top_legend(legend = c("observed", "reference (all shocks)", "gas-specific only",
+                      "industrial demand only"),
+           col = c("black", "black", d1_cols), lty = c(1, 2, 1, 1), lwd = c(1.5, 1.5, 2, 2),
+           ncol = 4)
+```
+
+### Escalation stress test (C1) and comparison
+
+C1 replays the median-target gas-specific shocks of `cf$c1_window`, from the
+month after the origin and with every other shock at zero, on top of the
+reference path; in the band, each rotation replays its own shocks of that
+window. The table compares the four forward paths.
+
+```{r cf-c1-plot, fig.width=7, fig.height=4.5}
+c1_col <- c(c1 = cf_cols[["Gas-Specific_Shock"]])
+theme_par(mar = c(3, 4.5, 3, 1), oma = c(0, 0, 3, 0))
+plot_cf_panel(cf_out, "pun", "c1", c1_col, "PUN: escalation stress test (C1)")
+top_legend(legend = c("observed", "reference (all shocks)", "escalation (C1)"),
+           col = c("black", "black", c1_col), lty = c(1, 2, 1), lwd = c(1.5, 1.5, 2), ncol = 3)
+```
+
+```{r cf-comparison}
+knitr::kable(cf_out$comparison, caption = paste0(
+  "Forward paths, ", format(min(cf_out$fdates), "%b %Y"), " to ",
+  format(max(cf_out$fdates), "%b %Y"), ": median-target model, ", pct_cf,
+  " band over admissible rotations in brackets (none where every rotation agrees). ",
+  "PUN in EUR/MWh; IPI and consumption in % (100 x log) deviation from the reference path in ",
+  format(max(cf_out$fdates), "%b %Y"), "; peak month of the median-target path."))
+```
+
 ## Saved output
 
 ```{r save-output}
 saveRDS(list(config = config, var_out = var_out, ident = ident, boot_out = boot_out,
-             fevd_mt = fevd_mt, hd = hd),
+             fevd_mt = fevd_mt, hd = hd, cf = cf_out),
         file.path(config$paths$output_dir, "svar_results.rds"))
 cat("Saved results to", file.path(config$paths$output_dir, "svar_results.rds"), "\n")
 ```
