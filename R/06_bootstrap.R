@@ -99,7 +99,14 @@ stopifnot({
 run_one_bootstrap_replication <- function(fit, endo, exo, p, config) {
   coefs <- extract_var_coefs(fit, p, exo)
   resid_mat <- stats::residuals(fit)
-  boot_resid <- resid_mat[sample(seq_len(nrow(resid_mat)), replace = TRUE), , drop = FALSE]
+  ## Rescale by sqrt(T / (T - q)), q = regressors per equation: raw OLS
+  ## residuals have variance SSR / T, but identification uses the
+  ## df-corrected summary(fit)$covres (SSR / (T - q)). Unscaled, every
+  ## bootstrap shock came out ~14% smaller (q = 61, T = 239) and the bands
+  ## were pulled toward zero.
+  q <- ncol(fit$datamat) - fit$K
+  boot_resid <- resid_mat[sample(seq_len(nrow(resid_mat)), replace = TRUE), , drop = FALSE] *
+    sqrt(nrow(resid_mat) / (nrow(resid_mat) - q))
 
   sim <- simulate_var(coefs$A, coefs$const, init = endo[seq_len(p), , drop = FALSE],
                       resid_mat = boot_resid, B = coefs$B, exo = exo)
