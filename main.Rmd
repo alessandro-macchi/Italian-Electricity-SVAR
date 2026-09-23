@@ -13,16 +13,16 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = "center")
 
-source("00_config.R")
-source("01_load_data.R")
-source("02_transform.R")
-source("03_sanity_checks.R")
-source("04_var_model.R")
-source("05_sign_restrictions.R")
-source("06_bootstrap.R")
-source("07_fevd.R")
-source("08_historical_decomposition.R")
-source("09_conditional_forecast.R")
+source("R/00_config.R")
+source("R/01_load_data.R")
+source("R/02_transform.R")
+source("R/03_sanity_checks.R")
+source("R/04_var_model.R")
+source("R/05_sign_restrictions.R")
+source("R/06_bootstrap.R")
+source("R/07_fevd.R")
+source("R/08_historical_decomposition.R")
+source("R/09_conditional_forecast.R")
 
 ## Month names in English whatever the system locale: the conditional-forecast
 ## tables and date axes print them.
