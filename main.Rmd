@@ -746,8 +746,8 @@ window. The table compares the four forward paths.
 ```{r cf-c1-plot, fig.width=7, fig.height=4.5}
 c1_col <- c(c1 = cf_cols[["Gas-Specific_Shock"]])
 theme_par(mar = c(3, 4.5, 3, 1), oma = c(0, 0, 3, 0))
-plot_cf_panel(cf_out, "pun", "c1", c1_col, "PUN: escalation stress test (C1)")
-top_legend(legend = c("observed", "reference (all shocks)", "escalation (C1)"),
+plot_cf_panel(cf_out, "pun", "c1", c1_col, "Escalation Test")
+top_legend(legend = c("observed", "reference (all shocks)", "Escalation"),
            col = c("black", "black", c1_col), lty = c(1, 2, 1), lwd = c(1.5, 1.5, 2), ncol = 3)
 ```
 
