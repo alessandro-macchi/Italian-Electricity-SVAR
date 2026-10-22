@@ -24,11 +24,9 @@ config <- list(
   ## Common monthly grid. NULL bounds default to the min/max date observed
   ## across all raw series (their union), so months missing at the start or
   ## end of any individual series surface as explicit NA rather than being
-  ## silently dropped or misaligned. Fixed here to Feb 2005 - Dec 2025: the
-  ## start is not actually binding until gas_storage_monthly.csv (endogenous,
-  ## only starts 2011-01), and estimate_var() drops any row with an NA
-  ## endogenous value anyway -- Jan 2026 onward (every series runs past Dec
-  ## 2025) is dropped deliberately.
+  ## silently dropped or misaligned. Fixed here to Feb 2005 - Dec 2025:
+  ## estimate_var() drops any row with an NA endogenous value anyway, and
+  ## Jan 2026 onward (every series runs past Dec 2025) is dropped deliberately.
   sample = list(
     start = "2005-02-01",
     end   = "2025-12-01"

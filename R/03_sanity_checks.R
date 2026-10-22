@@ -77,10 +77,7 @@ unit_root_table <- function(raw_data, variables_cfg, space = c("level", "transfo
 }
 
 #' Johansen trace test (H0: cointegration rank <= r) on the endogenous
-#' variables' level-form series, using the VAR's own lag order p. Controls
-#' for the same structural breaks the VAR conditions on (energy_crisis,
-#' covid_crisis) plus monthly seasonals, via ca.jo()'s `dumvar` -- otherwise
-#' those level shifts can register as spurious cointegration.
+#' variables' level-form series, using the VAR's own lag order p.
 johansen_test <- function(raw_data, variables_cfg, p) {
   endo_cfg <- Filter(function(v) v$role == "endogenous", variables_cfg)
 
