@@ -1,173 +1,141 @@
-# SVAR of the Italian Electricity Market
+# A Structural VAR Analysis for the Italian Electricity Market
 
-## Structure
+MSc thesis in Data Science for Economics, Università degli Studi di Milano,
+academic year 2025/26. Supervisor: Prof. Andrea Bastianin. Co-supervisor:
+Prof. Luca Rossini.
 
-```
-R/00_config.R              Central configuration — the only file you should
-                          normally need to edit.
-R/01_load_data.R           Reads each raw CSV with its own delimiter/date
-                          format/decimal mark, aligns everything onto one
-                          common monthly grid (missing months -> explicit NA).
-R/02_transform.R           Reversible level/log/diff/logdiff transforms.
-R/03_sanity_checks.R       Unit-root (ADF/KPSS) and Johansen cointegration
-                          tests.
-R/04_var_model.R           Reduced-form VAR: endogenous/exogenous split and
-                          lag selection, both driven by config.
-R/05_sign_restrictions.R   Identification: Haar-uniform rotations (QR),
-                          B0 = P %*% Q, generic sign checking against
-                          config$shocks, admissible-set search, Fry-Pagan
-                          (2011) median-target selection.
-R/06_bootstrap.R           Inoue & Kilian (2013) residual bootstrap: resample
-                          residuals, rebuild the sample recursively,
-                          re-estimate the VAR, and re-run the FULL
-                          identification search inside every replication.
-R/07_fevd.R                Forecast error variance decomposition under
-                          partial identification: identified shares sum to
-                          less than one, remainder left to unidentified
-                          shocks.
-R/08_historical_decomposition.R  Historical decomposition over the
-                          estimation sample using the single Fry-Pagan
-                          rotation; no VAR re-estimated, no rotation redrawn.
-R/09_conditional_forecast.R  Conditional forecasts (thesis sec. 5.4) with
-                          every parameter fixed at the estimation-sample
-                          values: ex-post counterfactual, TTF-held-flat
-                          scenario, and a replayed gas-specific-shock
-                          scenario.
-main.Rmd                  Orchestrator: sources the modules above and
-                          produces the report, section by section.
-data/raw/                 Raw CSVs (one per configured variable).
-output/                   Rendered report + saved results (.rds).
-```
+**[Slides](docs/presentation.pdf) · [Full report](https://alessandro-macchi.github.io/Italian-Electricity-SVAR/main.html)**
 
-## Running it
+Italy generates close to half of its electricity from natural gas, so shocks in
+the European gas market reach households and firms through the PUN (*Prezzo
+Unico Nazionale*), the Italian wholesale reference price. This project
+estimates a structural VAR on monthly data from 2006 to 2025 with four
+endogenous variables (the PUN, the TTF gas price, electricity consumption and
+industrial production) and renewable installed capacity as an exogenous
+regressor. Sign restrictions on impact separate three structural shocks:
+industrial demand, non-industrial demand and gas-specific. The restrictions fix
+only the direction of each response; its size, persistence and share of
+variance are left to the data. The identified model is used for impulse
+responses, variance and historical decompositions, and conditional forecasts
+up to the end of 2027.
+
+## Main findings
+
+- **Gas shocks pass through strongly and persistently.** A one-standard-deviation
+  gas-specific shock raises the PUN by 7.2% on impact and by 8.9% at its peak,
+  and the effect stays significant for 18 months. On impact, prices respond
+  up to six times more than quantities.
+- **Gas drives the PUN in the long run.** Industrial demand explains about half
+  of the PUN's forecast error variance one month ahead, but at one and two
+  years the gas-specific shock is the largest source (45% and 48%).
+- **The same gas price can mean opposite things.** If TTF is held at its August
+  2026 level, industrial production changes by −7.4 log points on average over
+  January–August 2027 when the price reflects gas scarcity, and by +8.3 when it
+  reflects stronger industrial demand. The bands exclude zero in both cases.
+
+![Response of the PUN to each identified shock](docs/irf_pun.png)
+
+*Response of the PUN (%) to each identified shock, 0–36 months. Line:
+median-target model; band: 68% bootstrap band.*
+
+## Method
+
+- Reduced-form VAR with 12 lags in log levels, 11 monthly dummies and RES
+  installed capacity as an exogenous regressor.
+- Identification by sign restrictions on impact. 300,000 random (Haar-uniform)
+  rotations of the Cholesky factor are screened against the table below, and
+  about 0.2% pass. The reported model is the Fry and Pagan (2011) median
+  target: the admissible model closest to the pointwise median.
+- Inference by a residual bootstrap with 2,000 replications. Each replication
+  rebuilds the sample, re-estimates the VAR and re-runs the whole sign search
+  (Kilian and Lütkepohl, 2017).
+
+| Response of            | Industrial demand | Non-industrial demand | Gas-specific | Unlabelled |
+|------------------------|:-----------------:|:---------------------:|:------------:|:----------:|
+| Electricity price      | +                 | +                     | +            | free       |
+| Gas price              | +                 | +                     | +            | free       |
+| Electricity consumption| +                 | +                     | −            | free       |
+| Industrial production  | +                 | −                     | −            | free       |
+
+## Reproduce
+
+Tested with R 4.3.0 and `vars` 1.6.1, `urca` 1.3.4, `tseries` 0.10.58,
+`purrr` 1.0.4, `tibble` 3.2.1, `dplyr` 1.1.4, `readr` 2.1.5, `lubridate` 1.9.4,
+`knitr` 1.49 and `rmarkdown` 2.29.
 
 ```r
+install.packages(c("vars", "urca", "tseries", "purrr", "tibble", "dplyr",
+                   "readr", "lubridate", "knitr", "rmarkdown"))
 rmarkdown::render("main.Rmd")
 ```
 
-If R complains it can't find pandoc (common outside RStudio on Windows),
-point it at RStudio's bundled copy first:
+Rendering writes `main.html` and saves every estimate to
+`output/svar_results.rds`. Seeds are fixed in `R/00_config.R`, so a re-run
+reproduces the reported numbers. The main sign search takes under a minute,
+and the bootstrap about 30 minutes on a laptop (0.9 s per replication). For a
+quick run, lower `config$bootstrap$n_boot`.
 
-```r
-Sys.setenv(RSTUDIO_PANDOC = "C:/Program Files/RStudio/resources/app/bin/quarto/bin/tools")
-rmarkdown::render("main.Rmd")
-```
+## Repository structure
 
-Opening the project in RStudio and clicking "Knit" does this automatically.
+| Path | Contents |
+|------|----------|
+| `R/00_config.R` | Every modelling choice: variables, transforms, lags, sign restrictions, bootstrap and scenario settings |
+| `R/01_load_data.R` | Reads each raw CSV with its own format and aligns all series on one monthly grid |
+| `R/02_transform.R` | Level, log, difference and log-difference transforms |
+| `R/03_sanity_checks.R` | Unit-root (ADF, KPSS) and Johansen cointegration tests |
+| `R/04_var_model.R` | Reduced-form VAR, lag selection, residual and stability diagnostics |
+| `R/05_sign_restrictions.R` | Random rotations, sign checks, median-target selection |
+| `R/06_bootstrap.R` | Residual bootstrap with the full sign search in every replication |
+| `R/07_fevd.R` | Forecast error variance decomposition |
+| `R/08_historical_decomposition.R` | Historical decomposition |
+| `R/09_conditional_forecast.R` | Conditional forecasts: the March 2026 gas shock, constant gas price, escalation stress test |
+| `main.Rmd`, `main.html` | Report that runs every step above, and its rendered copy |
+| `data/raw/` | Input series (see [Data](#data)) |
+| `output/svar_results.rds` | Saved estimates |
+| `docs/` | Slides and the README figure |
 
-## Current data
+## Data
 
-`data/raw/` holds five series wired into `config$variables`: `pun.csv` (PUN,
-the target), `ttf.csv` (TTF gas price, monthly close), `energy_consumption.csv`
-(electricity consumption), `ita_ipi.csv` (Italian industrial production
-index), and `ita_res_capacity.csv` (RES installed capacity, exogenous). They
-arrive with different delimiters, decimal marks, and date-column formats
-(`"%m-%Y"` for most, `"%Y-%m"` for `ita_ipi.csv`) — exactly the kind of
-mismatch point 2 below is designed to absorb without touching the loader.
-The loader also supports a locale-independent `"monthname"` sentinel for
-free-text "Mon-YY"/"Mon YYYY" date columns (see `parse_month_name_date()` in
-`01_load_data.R`), though none of the currently configured series need it.
+Monthly series, February 2005 to December 2025 for estimation and up to August
+2026 for the conditional forecasts.
 
-A few other raw CSVs (`cdd.csv`, `hdd.csv`, `gas_storage_monthly.csv`,
-`covid_hospitalizations.csv`, `covid_crisis_dummy.csv`,
-`energy_crisis_dummy.csv`) sit in `data/raw/` but are not yet referenced by
-`config$variables`.
+| File | Series | Source | Reuse terms |
+|------|--------|--------|-------------|
+| `pun.csv` | PUN, monthly average of daily values (EUR/MWh) | [GME](https://www.mercatoelettrico.org) | Aggregate market data are public; non-commercial reuse citing "Fonte: GME" |
+| `energy_consumption.csv` | National electricity demand, *fabbisogno nazionale* (MWh) | [GME](https://www.mercatoelettrico.org) | As above |
+| `ttf.csv` | TTF day-ahead close, monthly average (EUR/MWh) | LSEG Workspace (Refinitiv) | Proprietary. Not included: export it with your own LSEG access into `data/raw/ttf.csv` (columns `Date`, `month_start`, `Price`, `n_obs`) |
+| `ita_ipi.csv` | Industrial production index, NACE B–D, calendar adjusted, 2021 = 100 | [Eurostat](https://ec.europa.eu/eurostat) | Reuse allowed with the source acknowledged |
+| `ita_res_capacity.csv` | Renewable installed capacity (MW), annual data interpolated to monthly by the author | [IRENA](https://www.irena.org/Data) | Reuse allowed with attribution (© IRENA) |
 
-## How to modify each of the 8 required points
+The data are not covered by the code's MIT licence; they remain under their
+providers' terms.
 
-**1. Scalability — adding a variable.** Append one block to
-`config$variables` in `00_config.R` (id, file, date_col, date_format,
-value_col, delim, decimal, label, transform, role). Nothing else changes:
-the loader, transformer, sanity checks, and VAR split all iterate over this
-list generically. (Restricting the new variable's shock response, if
-desired, is a separate, deliberate edit to `config$shocks`.)
+## Changing the model
 
-**2. Date standardization.** Each variable's `date_format` is a strptime
-string (e.g. `"%Y-%m-%d"`, `"%d/%m/%Y"`, `"%m-%Y"`), or the sentinel
-`"monthname"` for free-text "Mon-YY"/"Mon YYYY" columns like `ttf.csv`.
-`load_all_series()` parses every series with its own format, floors dates
-to the 1st of the month, and left-joins them all onto one common monthly
-grid (`build_monthly_grid()`) — any month a source is missing becomes an
-explicit `NA` row instead of shifting the others out of alignment.
+Every choice lives in `R/00_config.R`. The other modules loop over the config
+and need no edits.
 
-**3. Diagnostics.** One compact table per check, in `main.Rmd`'s
-"Diagnostics" section: `unit_root_table()` in `03_sanity_checks.R` (ADF +
-KPSS, one row per variable with a p-value, in two tables -- level and
-after `02_transform.R`'s configured transform), `johansen_test()` (same
-file; cointegration rank test on the endogenous variables' level-form
-series, against its 5% critical value), and
-`residual_diagnostics()`/`stability_table()` in `04_var_model.R`
-(Portmanteau/LM and Jarque-Bera tests on the fitted VAR's residuals, and
-companion-matrix root moduli). No pass/fail flags anywhere -- read
-statistics against p = 0.05 (or the 5% critical value) directly.
+- **Add a variable:** append one block to `config$variables` (file, date column
+  and format, delimiter, decimal mark, label, transform, role). The loader
+  aligns it on the monthly grid, and missing months become `NA`.
+- **Transform:** set `transform` to `"level"`, `"log"`, `"diff"` or `"logdiff"`.
+- **Endogenous or exogenous:** set `role`. Exogenous series enter
+  `vars::VAR(exogen = ...)` together with the monthly dummies.
+- **Lag order:** `config$lag_selection$method` is `"fixed"` (uses `p_fixed`) or
+  `"auto"` (uses `vars::VARselect()` with `criterion` set to AIC, HQ, SC or FPE).
+- **Sign restrictions:** `config$shocks` has one entry per shock, mapping each
+  restricted variable to a sign and the horizons it applies to (0 = impact).
+  If tighter restrictions give "No admissible rotations found", loosen them or
+  raise `config$identification$n_draws`.
+- **Inference and scenarios:** `config$bootstrap` sets the replications,
+  rotations per replication and band level; `config$fevd$horizons` and
+  `config$cf` set the FEVD horizons and the scenario dates.
 
-**4. Reversible transformations.** Change `transform` in a variable's
-config block to `"level"`, `"log"`, `"diff"`, or `"logdiff"` and re-run —
-`02_transform.R`'s `apply_transform()` dispatches on that string alone.
+Main methodological references: Kilian, L. and Lütkepohl, H. (2017),
+*Structural Vector Autoregressive Analysis*, Cambridge University Press;
+Fry, R. and Pagan, A. (2011), "Sign restrictions in structural vector
+autoregressions: a critical review", *Journal of Economic Literature* 49(4).
 
-**5. Endogenous/exogenous split.** Change `role` to `"endogenous"` or
-`"exogenous"` in a variable's config block. `split_by_role()` in
-`04_var_model.R` reads it automatically; `estimate_var()` passes the
-exogenous block to `vars::VAR(..., exogen = ...)`. `monthly_dummies()`
-always appends 11 monthly seasonal dummies (Feb-Dec; Jan is the omitted
-reference month) to that block, in place of `vars::VAR()`'s built-in
-`season` argument.
+## License
 
-**6. Lag selection.** `config$lag_selection$method` is `"fixed"` (uses
-`p_fixed`) or `"auto"` (uses `vars::VARselect()` with
-`config$lag_selection$criterion`, one of `AIC`/`HQ`/`SC`/`FPE`). Switching
-is a one-word change.
-
-**7. Sign restrictions.** `config$shocks` is a list, one entry per shock:
-`name` plus a `restrictions` list mapping a variable id to `sign` (`"+"` or
-`"-"`) and `horizons` (impulse-response horizons, 0 = impact). Add a shock
-by appending another entry — `05_sign_restrictions.R` loops over
-`config$shocks` generically and never needs to change. Shock *i* (in list
-order) is checked against column *i* of the random rotation `B0`; because
-`Q` is Haar-uniform over the whole orthogonal group, this is not a loss of
-generality — the ensemble of random draws already explores every column
-assignment. The current table is SATURATED — three shocks (industrial
-demand, non-industrial demand, gas-specific), each restricting all four
-endogenous variables, impact-only — and PAIRWISE DISJOINT, so no admissible
-rotation can satisfy two shocks' restrictions in the same column and the
-shock labels cannot switch across draws (see the table and discussion in
-`00_config.R`). That saturation costs acceptance rate: roughly 0.14% of
-draws are admissible, against `config$identification$n_draws = 300000`. If
-you tighten restrictions further and get "No admissible rotations found",
-that error message means the restrictions are infeasible for this dataset;
-loosen the horizons/signs or raise `n_draws`.
-
-**8. Readability.** Each module file has one job and small functions
-(cholesky factor, one rotation draw, one restriction check, one bootstrap
-replication, etc.) — see the file list above.
-
-## Bootstrap and diagnostics
-
-- `config$identification$n_draws` / `config$bootstrap$draws_per_boot`
-  control how many candidate rotations are tried in the main search and in
-  each bootstrap replication, respectively.
-- The **acceptance rate** (admissible rotations / draws tried) is reported
-  for the main identification and, as a distribution, across bootstrap
-  replications — a low rate means the restrictions are informative
-  (non-refutability diagnostic).
-- A bootstrap replication that finds zero admissible rotations in
-  `draws_per_boot` draws is dropped and counted in `n_failed`; the
-  percentile bands use only the successful replications (`n_ok`).
-
-## FEVD, historical decomposition, and conditional forecast
-
-- `07_fevd.R` — forecast error variance decomposition under **partial**
-  identification: the denominator is the full reduced-form forecast error
-  variance, so identified shares sum to less than one and the remainder is
-  reported explicitly as left to unidentified shocks. Horizons come from
-  `config$fevd$horizons`.
-- `08_historical_decomposition.R` — how much of each variable's deviation
-  from its deterministic baseline each structural shock accounts for,
-  period by period, using the single Fry-Pagan median-target rotation;
-  nothing is re-estimated or redrawn.
-- `09_conditional_forecast.R` (thesis sec. 5.4) — conditional forecasts with
-  every parameter fixed at the estimation-sample values: an ex-post
-  counterfactual switching off `cf$attack_shocks` from `cf$attack_month`
-  on, a TTF-held-flat scenario (D1) read three ways, and a scenario (C1)
-  replaying the median-target gas-specific shocks of `cf$c1_window`.
-  `cf$attack_month` is currently a placeholder pending confirmation.
+Code: [MIT](LICENSE). Data: see [Data](#data).
